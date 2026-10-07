@@ -14,8 +14,9 @@ does the rest, using PyPI trusted publishing (no API tokens anywhere).
 
 ## Each release
 
-1. Change the version in **both** `pyproject.toml` and `skyborne/__init__.py` (the workflow fails if
-   they differ, or if the tag isn't `v` plus that version). Update the README if the install steps
+1. Change the version in `pyproject.toml`, `skyborne/__init__.py` and `plugin/.claude-plugin/plugin.json`. The
+   workflow fails if the first two differ or the tag isn't `v` plus that version, and a test fails if the plugin
+   file differs. Update the README if the install steps
    changed: PyPI shows the README as it is at the tag, and a published version can't be edited. In
    [CHANGELOG.md](../CHANGELOG.md), rename `[Unreleased]` to `[X.Y.Z] - date` (and add a fresh empty
    `[Unreleased]` above it). Write it for someone using Skyborne, in this shape: a bold feature name on

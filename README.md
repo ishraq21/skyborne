@@ -164,7 +164,8 @@ skyborne install
 ```
 
 The second command makes the plugin match the new version (`skyborne doctor` tells you when it's
-needed). Start Skyborne again afterwards.
+needed). If you run Skyborne on another port, add it: `skyborne install --port 7400`. Start Skyborne
+again afterwards.
 
 ## Commands
 

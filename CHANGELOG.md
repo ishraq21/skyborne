@@ -8,12 +8,14 @@ notes are the version's section here.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-07
+
 **Version option**
 - `skyborne --version` prints the installed Skyborne version and exits.
 
 **Demo site**
 - [skyborne.dev](https://skyborne.dev) plays a recorded session in the city, beside a few sample districts, with nothing to install. Its buttons are marked Demo and send nothing.
-- The package's Homepage link points there from the next release.
+- On PyPI, the package's Homepage link now points there.
 
 **Guide: troubleshooting and settings**
 - A new Troubleshooting section covers the common problems (an empty city, a taken port, no "Needs you" card, Usage and Context showing "—"), starting with `skyborne doctor`.
@@ -23,6 +25,7 @@ notes are the version's section here.
 **Changing the port**
 - `skyborne install --port N` now moves Skyborne's status line to the new port too. Before, it kept sending to the old port, so Usage and Context stayed empty.
 - `skyborne doctor` warns when the status line and the port you check don't match.
+- A leftover Skyborne status line is no longer saved as your "previous" one, which could make the status line start itself over and over after a reinstall.
 
 ## [0.1.0] - 2026-10-07
 

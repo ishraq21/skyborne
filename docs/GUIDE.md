@@ -156,7 +156,7 @@ Start with `skyborne doctor`. It checks everything below that it can and says in
   address changes too (`http://127.0.0.1:7400/`), and its settings start fresh there.
 - **No "Needs you" card appears when Claude asks permission, or the doctor says the plugin is from an
   older Skyborne.** Run `skyborne install` again, then start a new Claude Code session. Do this after
-  every update, and after you change `approval_timeout_seconds`.
+  every update (with `--port N` if you use another port), and after you change `approval_timeout_seconds`.
 - **Doctor reports hooks or the plugin turned off.** Something in your Claude Code settings blocks them:
   `disableAllHooks`, `enabledPlugins` set to false for Skyborne, or (on managed machines)
   `allowManagedHooksOnly` or `strictKnownMarketplaces`. The doctor names which one. Skyborne
