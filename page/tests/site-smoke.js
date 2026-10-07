@@ -83,7 +83,7 @@ function serve() {
     ok(!(await page.evaluate(() => document.body.classList.contains('reel'))), 'The R key reached the city through the welcome');
     const stops = [];
     for (let i = 0; i < 6; i++) { await page.keyboard.press('Tab'); stops.push(await page.evaluate(() => document.activeElement.textContent.trim().slice(0, 18))); }
-    ok(stops.every((s) => /Launch|Install|X|Blog|Report/.test(s)), 'Tab left the welcome: ' + stops.join(' | '));
+    ok(stops.every((s) => /Launch|Install|X|Report/.test(s)), 'Tab left the welcome: ' + stops.join(' | '));
     await page.screenshot({ path: dist('smoke-site-welcome.png') });
     // Launch closes it, remembers it, and starts the camera sweep
     await page.evaluate(() => document.getElementById('welcomeGo').click());
@@ -135,6 +135,7 @@ function serve() {
     const foot = await page.$$eval('.foot > *', (els) => els.map((e) => (e.classList.contains('gh') ? 'github' : e.id === 'demoAbout' ? 'about' : e.className.split(' ')[0])));
     ok(foot[foot.length - 1] === 'about' && foot[foot.length - 2] === 'github', 'About is not the last pill, after the GitHub icon: ' + foot.join(', '));
     ok(!(await page.textContent('body')).includes('Newsletter'), 'A Newsletter button is still on the page');
+    ok(!(await page.evaluate(() => [...document.querySelectorAll('#welcome a')].map((a) => a.textContent.trim()).includes('Blog'))), 'The welcome still has a Blog link');
     ok((await page.textContent('.foot .credit')).trim() === 'By Mirza Ishraq', 'The footer credit is not "By Mirza Ishraq": ' + (await page.textContent('.foot .credit')));
     ok(/LLM observability/.test(await page.textContent('#welcome')) && /agent tracing/.test(await page.textContent('#welcome')) && !/Best,\s*Mirza/.test(await page.textContent('#welcome')), 'The welcome copy is not as asked');
     const links = await page.$$eval('.foot a, #welcome a', (as) => as.map((a) => a.href));

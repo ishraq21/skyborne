@@ -7,6 +7,8 @@
   .foot .about:hover{ background: var(--raised); }
   /* the GitHub icon says "GitHub" beside it here, like the button it replaces */
   .foot .gh.named{ width: auto; padding: 0 14px 0 11px; gap: 7px; font-size: 12.5px; font-weight: 600; }
+  /* on a phone the top bar stacks; the logo pill keeps its own width instead of stretching across the screen */
+  @media (max-width: 760px){ body .hud{ align-items: flex-start; } body .hud .toolbar{ align-self: flex-end; } }
   @media (max-width: 520px){ body .foot{ flex-wrap: wrap; height: auto; right: 16px; row-gap: 8px; } }  /* four pills don't fit one row on a phone */
   .welcome{ position: fixed; z-index: 40; inset: 0; display: flex; overflow-y: auto; padding: 16px; background: rgba(244, 243, 239, .5); backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); }
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){ .welcome{ background: rgba(244, 243, 239, .94); } }
@@ -50,7 +52,6 @@
     </div>
     <div class="links">
       <a href="https://x.com/myspaceio" target="_blank" rel="noopener noreferrer">X</a>
-      <a href="https://my-space.io" target="_blank" rel="noopener noreferrer">Blog</a>
       <a href="https://github.com/ishraq21/skyborne/issues/new?template=bug_report.md" target="_blank" rel="noopener noreferrer">Report an issue</a>
     </div>
   </div>
