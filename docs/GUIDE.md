@@ -187,6 +187,7 @@ Four places hold settings.
 
 | Option | Default | What it does |
 | - | - | - |
+| `skyborne --version` | — | Prints the installed Skyborne version and exits. |
 | `skyborne --port N` | `7317` | The port the city listens on (`127.0.0.1` only). Give `skyborne install` and `skyborne doctor` the same `--port`. |
 | `skyborne --no-open` | opens a browser | Starts without opening the city. |
 | `skyborne --verbose` | off | Logs every event's name and short session id. |

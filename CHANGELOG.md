@@ -8,6 +8,9 @@ notes are the version's section here.
 
 ## [Unreleased]
 
+**Version option**
+- `skyborne --version` prints the installed Skyborne version and exits.
+
 **Demo site**
 - [skyborne.dev](https://skyborne.dev) plays a recorded session in the city, beside a few sample districts, with nothing to install. Its buttons are marked Demo and send nothing.
 - The package's Homepage link points there from the next release.

@@ -171,6 +171,7 @@ needed). Start Skyborne again afterwards.
 | Command | What it does |
 | - | - |
 | `skyborne` | Starts Skyborne and opens the city |
+| `skyborne --version` | Prints the installed Skyborne version and exits |
 | `skyborne import --days 7` | Brings in past sessions from the history Claude Code keeps |
 | `skyborne doctor` | Checks your setup and explains any problem |
 | `skyborne record <id> --out demo.json --stand-ins` | Saves one session to a file the city can replay, with personal details scrubbed; read the text it lists before you share it |

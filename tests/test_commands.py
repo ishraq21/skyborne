@@ -6,11 +6,26 @@ import sys
 
 from conftest import payload, wait_until
 from test_server import stored
+from skyborne import __version__
 
 
 def run(*args, stdin=b'', env=None):
     return subprocess.run([sys.executable, '-m', 'skyborne', *args], input=stdin, capture_output=True, timeout=60,
                           env={**os.environ, **(env or {})})
+
+
+def test_version_prints_the_package_version_without_creating_data(fake_home):
+    r = run('--version')
+    # a printed line ends in \r\n on Windows: compare with the platform's line ending taken out
+    assert (r.returncode, r.stdout.replace(b'\r\n', b'\n'), r.stderr) == (0, f'skyborne {__version__}\n'.encode(), b'')
+    assert list(fake_home.iterdir()) == []
+
+
+def test_help_lists_the_version_option(fake_home):
+    r = run('--help')
+    assert r.returncode == 0 and r.stderr == b''
+    assert b'--version' in r.stdout
+    assert list(fake_home.iterdir()) == []
 
 
 def test_hook_is_silent_and_exits_0_when_the_server_is_down():

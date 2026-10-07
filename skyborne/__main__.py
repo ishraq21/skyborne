@@ -10,6 +10,8 @@
 import argparse
 import sys
 
+from . import __version__
+
 DEFAULT_PORT = 7317  # config.DEFAULT_PORT, repeated so the fast commands below import nothing else
 
 
@@ -129,6 +131,7 @@ def _first_run(app):
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     p = argparse.ArgumentParser(prog='skyborne', description='A local monitor for Claude Code.')
+    p.add_argument('--version', action='version', version=f'skyborne {__version__}')
     p.add_argument('--port', type=int, default=DEFAULT_PORT, help='port to listen on (default 7317)')
     p.add_argument('--no-open', action='store_true', help="don't open the city in a browser")
     p.add_argument('--verbose', action='store_true', help='log every event (name and short session id only)')
