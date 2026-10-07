@@ -106,7 +106,7 @@ if (siteAt > -1) {
       .map((e) => ({ t: e.t, payload: { hook_event_name: 'PermissionRequest', tool_name: e.payload.tool_name, tool_input: e.payload.tool_input } })) };
   const json = JSON.stringify(slim).replace(/</g, '\\u003c');  // a "</script>" in a command can't end the script early
   const logo = 'data:image/svg+xml;base64,' + fs.readFileSync(here('..', 'docs', 'images', 'logo.svg')).toString('base64');
-  const layer = fs.readFileSync(here('demo', 'demo.html'), 'utf8').replace(/\{\{LOGO\}\}/g, () => logo).replace(/\{\{INSTALL\}\}/g, 'uv tool install skyborne');
+  const layer = fs.readFileSync(here('demo', 'demo.html'), 'utf8').replace(/\{\{LOGO\}\}/g, () => logo);
   const meta = `<meta name="description" content="${DESC}">\n<link rel="canonical" href="${URL}">\n<meta name="theme-color" content="#f4f3ef">\n`
     + `<meta property="og:type" content="website">\n<meta property="og:site_name" content="Skyborne">\n<meta property="og:url" content="${URL}">\n`
     + `<meta property="og:title" content="${TITLE}">\n<meta property="og:description" content="${DESC}">\n`

@@ -30,7 +30,7 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.woff2': 'font/
   await page.waitForFunction(() => window.__skyborne?.city.districts.size >= 7 && getComputedStyle(document.getElementById('boot')).opacity === '0', null, { timeout: 90000 });
   await page.waitForTimeout(9000);  // the opening sweep ends, the districts have risen
   await page.evaluate((logo) => {
-    for (const sel of ['.hud', '.demo-bar', '.foot', '.alert', '.console', '.toast']) document.querySelectorAll(sel).forEach((e) => { e.style.display = 'none'; });
+    for (const sel of ['.hud', '.foot', '.alert', '.console', '.toast']) document.querySelectorAll(sel).forEach((e) => { e.style.display = 'none'; });
     const d = document.createElement('div');
     d.style.cssText = 'position:fixed;inset:0;z-index:50;display:flex;flex-direction:column;justify-content:flex-end;padding:0 64px 56px;'
       + 'background:linear-gradient(0deg,rgba(18,22,34,.82) 0%,rgba(18,22,34,.55) 38%,rgba(18,22,34,0) 72%);color:#fff;font-family:Inter,system-ui,sans-serif';

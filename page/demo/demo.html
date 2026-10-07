@@ -1,27 +1,17 @@
-<!-- The demo site's own layer, put in front of the city by `node build.js --site`: the welcome pop-up and the
-     overlay. Plain HTML, CSS and script, no libraries; nothing here loads from another host. {{LOGO}} is the logo
-     (docs/images/logo.svg) as a data: address, {{INSTALL}} the install command. -->
+<!-- The demo site's own layer, put in front of the city by `node build.js --site`: the welcome pop-up, and an
+     "About" pill in the footer that reopens it. Plain HTML, CSS and script, no libraries; nothing here loads from
+     another host. {{LOGO}} is the logo (docs/images/logo.svg) as a data: address. -->
 <style>
-  .demo-bar{ position: fixed; z-index: 3; left: 16px; bottom: calc(58px + env(safe-area-inset-bottom, 0px)); width: 332px; padding: 12px 14px 12px; display: grid; gap: 9px; font-size: 12.5px; line-height: 1.4; color: var(--fg); }
-  .demo-bar .top{ display: flex; gap: 10px; align-items: flex-start; }
-  .demo-bar img{ width: 30px; height: 30px; flex: none; }
-  .demo-bar p{ margin: 0; font-weight: 500; }
-  .demo-bar small{ display: block; margin-top: 2px; font-size: 11.5px; font-weight: 400; color: var(--fg-dim); }
-  .demo-bar .row{ display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-  .demo-bar a, .demo-bar button, .welcome a.btn, .welcome button.btn{ font: inherit; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); text-decoration: none; cursor: pointer; }
-  .demo-bar a:hover, .demo-bar button:hover{ background: var(--raised); }
-  .demo-bar a.dark{ background: var(--fg); border-color: var(--fg); color: var(--solid); }
-  .demo-bar a.dark:hover{ background: color-mix(in srgb, var(--fg) 86%, var(--solid)); }
-  .demo-bar .copy{ font-family: var(--font-mono); font-weight: 500; font-size: 11px; padding-right: 9px; }
-  .demo-bar .copy b{ font-family: var(--font-body); font-weight: 600; font-size: 11px; color: var(--accent-ink); }
-  .demo-bar .copy.done b{ color: var(--ok); }
-  .demo-bar .about{ border-color: transparent; background: transparent; font-weight: 500; color: var(--fg-dim); padding: 0 6px; }
-  body.reel .demo-bar{ display: none; }
+  /* "About" in the footer, a pill after the GitHub icon that reopens the welcome */
+  .foot .about{ font: inherit; font-weight: 500; flex: none; display: inline-flex; align-items: center; height: 31px; padding: 0 14px; border-radius: 999px; color: var(--fg); cursor: pointer; }
+  .foot .about:hover{ background: var(--raised); }
   .welcome{ position: fixed; z-index: 40; inset: 0; display: flex; overflow-y: auto; padding: 16px; background: rgba(244, 243, 239, .5); backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); }
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){ .welcome{ background: rgba(244, 243, 239, .94); } }
+  .welcome a.btn, .welcome button.btn{ font: inherit; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); text-decoration: none; cursor: pointer; }
   .welcome .card{ margin: auto; width: min(440px, 100%); padding: 22px 24px 16px; border-radius: var(--r-lg); background: var(--panel-strong); border: 1px solid var(--line); box-shadow: 0 24px 60px -24px rgba(27, 29, 34, .5); font-size: 13.5px; line-height: 1.5; color: var(--fg); }
   .welcome img{ display: block; width: 46px; height: 46px; margin: 0 auto 8px; }
-  .welcome h2{ margin: 0 0 8px; text-align: center; font-family: var(--font-display); font-weight: 700; font-size: 19px; letter-spacing: .01em; }
+  .welcome .hi{ margin: 0 0 6px; }
+  .welcome .bye{ margin: 12px 0 0; }
   .welcome p{ margin: 0 0 9px; }
   .welcome .acts{ display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap; margin: 14px 0 12px; }
   .welcome .btn{ height: 38px; padding: 0 18px; font-size: 13.5px; }
@@ -31,12 +21,8 @@
   .welcome .links{ display: flex; gap: 14px; justify-content: center; font-size: 12px; color: var(--fg-dim); padding-top: 10px; border-top: 1px solid var(--line); }
   .welcome .links a{ color: inherit; text-underline-offset: 3px; text-decoration-color: rgba(27, 29, 34, .3); }
   .welcome .links a:hover{ color: var(--fg); }
-  /* the console sheet of a phone covers the bottom: the overlay steps aside, and a request pill sits above it */
   @media (max-width: 760px){
-    .demo-bar{ left: 12px; right: 12px; width: auto; padding: 10px 12px; font-size: 12px; }
-    body:has(#console[data-open="true"]) .demo-bar{ display: none; }
     .welcome .card{ padding: 18px 18px 12px; font-size: 13px; line-height: 1.45; }
-    .welcome h2{ font-size: 17px; }
   }
   @media (max-height: 640px){
     .welcome .card{ padding: 14px 18px 10px; font-size: 12.5px; line-height: 1.4; }
@@ -47,26 +33,14 @@
   }
 </style>
 
-<aside class="demo-bar glass" aria-label="About this page">
-  <div class="top">
-    <img src="{{LOGO}}" alt="" width="30" height="30">
-    <p>Skyborne: a live 3D city of your Claude Code agents. Local-only.<small>A recorded session, plus sample districts.</small></p>
-  </div>
-  <div class="row">
-    <a class="dark" href="https://github.com/ishraq21/skyborne" target="_blank" rel="noopener noreferrer">GitHub</a>
-    <button type="button" class="copy" id="demoCopy" aria-label="Copy the install command"><span>{{INSTALL}}</span><b>Copy</b></button>
-    <a href="https://my-space.io" target="_blank" rel="noopener noreferrer">Newsletter</a>
-    <button type="button" class="about" id="demoAbout">About</button>
-  </div>
-</aside>
-
 <div class="welcome" id="welcome" role="dialog" aria-modal="true" aria-labelledby="welcomeTitle">
   <div class="card">
     <img src="{{LOGO}}" alt="" width="46" height="46">
-    <h2 id="welcomeTitle">Hi, I'm Mirza 👋</h2>
-    <p>I built Skyborne to see what my Claude Code agents were actually doing: who's working, what tools they use, where the tokens go. It turned into a city.</p>
+    <p class="hi" id="welcomeTitle">Hi, I'm Mirza,</p>
+    <p>I built Skyborne to see what my Claude Code agents were really doing: which ones are working, stuck or waiting on me, which tools and helpers they reach for, and where every token and cost goes. It turned into a city.</p>
     <p>This is a demo. It's playing back a recorded session. Nothing here is connected to your Claude Code. To watch your own agents live, install it from GitHub. It runs entirely on your computer.</p>
     <p>It's early, so expect rough edges. If something breaks, open an issue. And if you like it, a star helps a lot.</p>
+    <p class="bye">Thank you for checking out Skyborne!<br>Best,<br>Mirza</p>
     <div class="acts">
       <button type="button" class="btn go" id="welcomeGo">Launch Skyborne</button>
       <a class="btn alt" href="https://github.com/ishraq21/skyborne#install" target="_blank" rel="noopener noreferrer">Install on GitHub</a>
@@ -115,23 +89,16 @@ window.__skyborneDemo = {
     }
     e.stopPropagation();
   }, true);
-  document.getElementById('demoAbout').addEventListener('click', open);
-  if (!seen) go.focus();
-
-  var copy = document.getElementById('demoCopy'), label = copy.querySelector('b'), text = copy.querySelector('span').textContent, timer = 0;
-  function shown(ok) {
-    label.textContent = ok ? 'Copied' : 'Select and copy';
-    copy.classList.toggle('done', ok);
-    clearTimeout(timer); timer = setTimeout(function () { label.textContent = 'Copy'; copy.classList.remove('done'); }, 2000);
+  // "About": a separate pill in the footer, after the GitHub icon (the footer is drawn after this script runs)
+  function addAbout() {
+    var foot = document.querySelector('.foot');
+    if (!foot) return;
+    var b = document.createElement('button');
+    b.type = 'button'; b.id = 'demoAbout'; b.className = 'credit glass about'; b.textContent = 'About';
+    b.addEventListener('click', open);
+    foot.appendChild(b);
   }
-  copy.addEventListener('click', function () {
-    function fallback() {
-      var t = document.createElement('textarea'); t.value = text; t.setAttribute('readonly', ''); t.style.cssText = 'position:fixed;opacity:0';
-      document.body.appendChild(t); t.select();
-      var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
-      document.body.removeChild(t); shown(ok);
-    }
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { shown(true); }, fallback); else fallback();
-  });
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', addAbout); else addAbout();
+  if (!seen) go.focus();
 })();
 </script>
