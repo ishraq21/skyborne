@@ -35,8 +35,51 @@ jobs:
       - run: python -m pip install -e ".[dev]"
       - run: python -m pytest -q
 
-  page:
-    name: Page build and smoke tests
+  # Decides which of the slow browser jobs a pull request needs. They draw the 3D city in software (the runners
+  # have no graphics card), so they take 5 to 11 minutes each. Anything that isn't a pull request (a push to
+  # main, a release tag, a release dry run) always runs all of them.
+  changes:
+    name: Which page tests to run
+    runs-on: ubuntu-latest
+    outputs:
+      page: ${{ steps.which.outputs.page }}
+      server: ${{ steps.which.outputs.server }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: which
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          page=true
+          server=true
+          if [ "$EVENT" = pull_request ]; then
+            # The diff goes into a variable first: a failed diff must mean "run everything", not "nothing changed".
+            # --no-renames lists a moved file at both its old and new path; quotePath off keeps non-ASCII names readable.
+            if files="$(git -c core.quotePath=false diff --name-only --no-renames "$BASE"...HEAD)"; then
+              page=false
+              server=false
+              # The page: its sources, the committed build, the logo the demo site uses, and this file.
+              if grep -Eq '^(page/|skyborne/web/|docs/images/logo\.svg$|\.github/workflows/ci\.yml$)' <<< "$files"; then
+                page=true
+              fi
+              # The live test also runs the real server and reads recorded sessions.
+              if [ "$page" = true ] || grep -Eq '^(skyborne/|pyproject\.toml$|tests/fixtures/recordings/)' <<< "$files"; then
+                server=true
+              fi
+            fi
+          fi
+          echo "page=$page" >> "$GITHUB_OUTPUT"
+          echo "server=$server" >> "$GITHUB_OUTPUT"
+          echo "Page tests: $page. Live server test: $server."
+
+  page-city:
+    name: "Page: city and console"
+    needs: changes
+    if: needs.changes.outputs.page == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -45,10 +88,6 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: '24'
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
-        with:
-          python-version: '3.13'
-      - run: python -m pip install -e .
       - run: npm ci
         working-directory: page
       - run: npx playwright install --with-deps chromium
@@ -65,15 +104,31 @@ jobs:
           fi
       - run: node tests/smoke.js
         working-directory: page
+
+  page-live:
+    name: "Page: live server"
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -e .
+      - run: npm ci
+        working-directory: page
+      - run: npx playwright install --with-deps chromium
+        working-directory: page
       - run: node tests/live-smoke.js
         working-directory: page
         env:
           SKYBORNE_PYTHON: python
-      - name: The demo site builds and works
-        run: |
-          node build.js --site
-          node tests/site-smoke.js
-        working-directory: page
       - name: The Python package carries the page
         run: |
           python -m pip wheel . --no-deps -q -w wheel
@@ -85,3 +140,60 @@ jobs:
           print('wheel:', len(names), 'files;', sum('/web/' in n for n in names), 'page files')
           sys.exit(f'missing from the wheel: {missing}' if missing else 0)
           PY
+
+  page-site:
+    name: "Page: demo site"
+    needs: changes
+    if: needs.changes.outputs.page == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: '24'
+      - run: npm ci
+        working-directory: page
+      - run: npx playwright install --with-deps chromium
+        working-directory: page
+      - name: The demo site builds and works
+        run: |
+          node build.js --site
+          node tests/site-smoke.js
+        working-directory: page
+
+  # The one check branch protection asks for. It passes when every page job that was needed passed, or when none
+  # was needed. It fails if a job failed, was cancelled, or was skipped although it was needed.
+  page:
+    name: Page build and smoke tests
+    needs: [changes, page-city, page-live, page-site]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          CHANGES: ${{ needs.changes.result }}
+          NEED_PAGE: ${{ needs.changes.outputs.page }}
+          NEED_SERVER: ${{ needs.changes.outputs.server }}
+          CITY: ${{ needs.page-city.result }}
+          LIVE: ${{ needs.page-live.result }}
+          SITE: ${{ needs.page-site.result }}
+        run: |
+          echo "changes=$CHANGES (page=$NEED_PAGE, server=$NEED_SERVER) city=$CITY live=$LIVE site=$SITE"
+          bad=0
+          [ "$CHANGES" = success ] || bad=1
+          for r in "$CITY" "$LIVE" "$SITE"; do
+            case "$r" in success|skipped) ;; *) bad=1 ;; esac
+          done
+          if [ "$NEED_PAGE" = true ]; then
+            [ "$CITY" = success ] && [ "$SITE" = success ] || bad=1
+          fi
+          if [ "$NEED_SERVER" = true ]; then
+            [ "$LIVE" = success ] || bad=1
+          fi
+          [ "$NEED_PAGE" = true ] || [ "$NEED_PAGE" = false ] || bad=1
+          [ "$NEED_SERVER" = true ] || [ "$NEED_SERVER" = false ] || bad=1
+          if [ "$bad" = 1 ]; then
+            echo "::error::A page test failed, was cancelled, or was skipped when it was needed."
+            exit 1
+          fi
