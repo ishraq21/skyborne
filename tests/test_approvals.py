@@ -11,7 +11,7 @@ import threading
 import time
 import urllib.request
 
-from conftest import request, wait_until
+from conftest import SLOW, request, wait_until
 from skyborne.approvals import ANSWERS
 
 SID = '00000000-0000-4000-8000-0000000000cc'
@@ -64,8 +64,9 @@ class Held:
         self.done.set()
 
     def reply(self, timeout=3.0):
-        """(status, body) once the server answered, or None while it still holds the request."""
-        if not self.done.wait(timeout):
+        """(status, body) once the server answered, or None while it still holds the request. On CI the wait is
+        longer: a held request is held for minutes, so looking longer never makes a "still held" check wrong."""
+        if not self.done.wait(timeout * SLOW):
             return None
         head, _, body = self.raw.partition(b'\r\n\r\n')
         return int(head.split(b' ')[1]), body
@@ -134,7 +135,7 @@ def result_line(tuid, is_error=False):
 def listen(app):
     q = app.hub.subscribe()
 
-    def answers(timeout=3.0):
+    def answers(timeout=3.0 * SLOW):
         out, end = [], time.monotonic() + timeout
         while time.monotonic() < end:
             try:

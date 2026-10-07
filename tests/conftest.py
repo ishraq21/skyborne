@@ -8,6 +8,7 @@ import pytest
 
 FIX = pathlib.Path(__file__).resolve().parent / 'fixtures'
 REAL_CLAUDE_CONFIG_DIR = os.environ.get('CLAUDE_CONFIG_DIR')  # live tests need the real one (the login)
+SLOW = 3 if os.environ.get('CI') else 1  # CI runners are shared and stall for seconds: waits there are longer
 
 
 @pytest.fixture(autouse=True)
@@ -46,7 +47,9 @@ def request(app, method, path, body=None, headers=None, timeout=5):
 
 
 def wait_until(check, timeout=5.0):
-    end = time.monotonic() + timeout
+    """Waits for something to happen (never for it not to). On CI the wait is longer, so a runner stall isn't a failure;
+    local runs keep the real limits, which is where a slow regression shows."""
+    end = time.monotonic() + timeout * SLOW
     while time.monotonic() < end:
         value = check()
         if value:
