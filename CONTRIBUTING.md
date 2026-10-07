@@ -101,7 +101,9 @@ and how you tested it.
 - [ ] No real session data, secrets or personal paths are in the diff.
 
 CI runs the tests on Linux, macOS and Windows (Python 3.11 to 3.13) plus the page build and browser
-tests. It needs to be green before a merge.
+tests. On a pull request the browser tests (slow, about 5 to 11 minutes) run only the ones the change needs
+(the page, or the server and recorded sessions, or the CI workflow itself); pushes to `main` and releases
+always run them all. It needs to be green before a merge.
 
 ## Contributions made with Claude Code
 
