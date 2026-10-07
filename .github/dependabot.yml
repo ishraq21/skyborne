@@ -1,0 +1,26 @@
+# Weekly version updates for the GitHub Actions (pinned to commit SHAs in the workflows) and for pip
+# (the release build tools in .github/requirements-release.txt; the ranges in pyproject.toml are open, so they need none).
+# The page's npm packages (three.js, Playwright, fonts) get security updates only: a three.js bump
+# can change how the city looks, so those are updated by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    labels: [dependencies]
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    labels: [dependencies]
+    groups:
+      python:
+        patterns: ["*"]

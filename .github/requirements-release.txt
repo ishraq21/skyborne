@@ -1,0 +1,5 @@
+# The tools release.yml builds and checks the package with. Pinned here (not in the workflow) so
+# Dependabot can see and update them; the Release dry run proves a new set before a real release.
+build==1.6.1
+twine==7.0.0
+readme-renderer[md]==46.0

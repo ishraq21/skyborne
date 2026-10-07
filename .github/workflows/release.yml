@@ -62,7 +62,7 @@ jobs:
 
       - name: Build
         run: |
-          python -m pip install build==1.6.1 twine==7.0.0 "readme-renderer[md]==46.0"
+          python -m pip install -r .github/requirements-release.txt
           python -m build
           python -m twine check --strict dist/*
 
