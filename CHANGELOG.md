@@ -8,6 +8,10 @@ notes are the version's section here.
 
 ## [Unreleased]
 
+**Demo site**
+- [skyborne.dev](https://skyborne.dev) plays a recorded session in the city, beside a few sample districts, with nothing to install. Its buttons are marked Demo and send nothing.
+- The package's Homepage link points there from the next release.
+
 **Guide: troubleshooting and settings**
 - A new Troubleshooting section covers the common problems (an empty city, a taken port, no "Needs you" card, Usage and Context showing "—"), starting with `skyborne doctor`.
 - A new Settings section lists the `config.json` keys with their defaults, the command-line options, which city settings your browser keeps and the environment variables.

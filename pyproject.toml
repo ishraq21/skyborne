@@ -25,7 +25,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ishraq21/skyborne"
+Homepage = "https://skyborne.dev"
 Documentation = "https://github.com/ishraq21/skyborne/blob/main/docs/GUIDE.md"
 Source = "https://github.com/ishraq21/skyborne"
 Issues = "https://github.com/ishraq21/skyborne/issues"

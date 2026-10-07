@@ -17,6 +17,8 @@ working, who's stuck and who needs you, and approve or deny their requests right
 Everything stays on your computer: no account, no cloud, and no telemetry (nothing is sent back to
 anyone).
 
+**Try it in your browser: [skyborne.dev](https://skyborne.dev).** It plays a recorded session in the city, so there is nothing to install.
+
 > **Status: early.**
 
 <a href="docs/images/city-dusk.jpg"><img src="docs/images/city-dusk.jpg" alt="The Skyborne city at dusk: floating districts around City Hall, a Needs you card asking to approve a command, and the console listing every session"></a>
