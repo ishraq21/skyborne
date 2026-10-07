@@ -70,7 +70,7 @@ function serve() {
   {
     const { context, page } = await open({ permissions: ['clipboard-read', 'clipboard-write'] });
     await page.goto(base);
-    await page.waitForSelector('#welcome:not([hidden])', { timeout: 30000 });
+    await page.waitForSelector('#welcome:not([hidden])', { timeout: 30000 * SLOW });
     ok(await page.evaluate(() => document.activeElement && document.activeElement.id === 'welcomeGo'), 'Focus does not start on Launch');
     ok((await page.textContent('#welcome')).includes("Hi, I'm Mirza"), 'The welcome copy is missing');
     ok(await page.evaluate(() => [...document.querySelectorAll('#welcome .btn')].every((b) => parseFloat(getComputedStyle(b).borderRadius) >= 16 && getComputedStyle(b).textDecorationLine === 'none')), 'The welcome buttons lost their button styling');
@@ -103,7 +103,8 @@ function serve() {
     // the recorded request: a card whose buttons say Demo, and clicking sends nothing
     // all in one go, waiting inside the page: the card is on screen for about four seconds of each loop, and a
     // page drawn in software (CI) can stall for seconds, so waiting from here and looking afterwards loses the race
-    const before = requests.length;
+    const serverCalls = () => requests.filter((p) => /^\/(events|api|health|permission)/.test(p)).length;  // a font or image may still be loading: only server paths count
+    const before = serverCalls();
     const card = await page.evaluate(async (limit) => {
       const t0 = performance.now();
       while (!document.querySelector('#askList .ask:not(.terminal)')) {
@@ -121,25 +122,24 @@ function serve() {
     ok(card.afterKey.startsWith('This is a demo'), 'The D key in the demo shows no note: ' + card.afterKey);
     ok(!/Couldn't send/.test(card.all), 'The demo card said it could not send');
     await page.waitForTimeout(500);
-    ok(requests.length === before, 'Answering the demo card sent a request');
+    ok(serverCalls() === before, 'Answering the demo card asked a server path for something');
     // Usage and Context show Claude Code's own figures from the recording, not dashes
     const tiles = await page.waitForFunction(() => { const u = document.getElementById('sUse').textContent, c = document.getElementById('sCtx').textContent; return /^\$\d/.test(u) && /^\d+%$/.test(c) ? [u, c] : null; }, null, { timeout: 120000 * SLOW }).then((h) => h.jsonValue(), () => null);
     ok(tiles, 'Usage and Context never showed figures: ' + await page.evaluate(() => document.getElementById('sUse').textContent + ' / ' + document.getElementById('sCtx').textContent));
     // a sample district opens a detail with steps in it, not "Nothing is stored"
     const sampleId = await page.evaluate(() => [...window.__skyborne.city.districts.keys()].find((k) => String(k).startsWith('sample-')));
     await page.evaluate((id) => window.__skyborne.openDetail(window.__skyborne.city.districts.get(id)), sampleId);
-    await page.waitForSelector('#sessDetail:not([hidden])', { timeout: 10000 });
+    await page.waitForSelector('#sessDetail:not([hidden])', { timeout: 20000 * SLOW });
     await page.waitForFunction(() => !/Loading/.test(document.getElementById('sessDetail').textContent), null, { timeout: 15000 * SLOW }).catch(() => {});
     const sample = await page.evaluate(() => ({ text: document.getElementById('sessDetail').textContent, steps: window.__skyborne.detail.data?.steps?.length || 0 }));
     ok(!/Nothing is stored/.test(sample.text) && sample.steps > 0, `A sample district's detail is empty (${sample.steps} steps): ` + sample.text.slice(0, 120));
     await page.screenshot({ path: dist('smoke-site-sample-detail.png') });
     await page.evaluate(() => window.__skyborne.closeDetail());
     // a session's detail opens from the recording
-    const recId = await page.evaluate(() => [...window.__skyborne.city.districts.keys()].find((k) => !String(k).startsWith('sample-')));
+    const recId = await page.waitForFunction(() => [...window.__skyborne.city.districts.entries()].find(([k, d]) => !String(k).startsWith('sample-') && !d.leaving)?.[0], null, { timeout: 120000 * SLOW }).then((h) => h.jsonValue());
     await page.evaluate((id) => window.__skyborne.openDetail(window.__skyborne.city.districts.get(id)), recId);
-    await page.waitForSelector('#sessDetail:not([hidden])', { timeout: 10000 });
-    await page.waitForTimeout(1200);
-    ok(/Prompt 1/.test(await page.textContent('#sessDetail')), 'The recorded session\'s detail does not show its prompt');
+    await page.waitForSelector('#sessDetail:not([hidden])', { timeout: 20000 * SLOW });
+    ok(await page.waitForFunction(() => /Prompt 1/.test(document.getElementById('sessDetail').textContent), null, { timeout: 20000 * SLOW }).then(() => true, () => false), 'The recorded session\'s detail does not show its prompt');
     await page.screenshot({ path: dist('smoke-site-detail.png') });
     await page.evaluate(() => window.__skyborne.closeDetail());
     // the footer: About is its own pill after the GitHub icon, and no overlay card is left on the page
@@ -204,7 +204,7 @@ function serve() {
   for (const [w, h] of [[390, 844], [360, 640]]) {
     const { context, page } = await open({ viewport: { width: w, height: h }, isMobile: true, hasTouch: true });
     await page.goto(base);
-    await page.waitForSelector('#welcome:not([hidden])', { timeout: 30000 });
+    await page.waitForSelector('#welcome:not([hidden])', { timeout: 30000 * SLOW });
     const fit = await page.evaluate(() => { const c = document.querySelector('#welcome .card'), r = c.getBoundingClientRect(); return { scroll: c.scrollHeight - c.clientHeight, top: r.top, bottom: r.bottom, h: innerHeight, right: r.right, w: innerWidth }; });
     ok(fit.scroll <= 0 && fit.top >= 0 && fit.bottom <= fit.h && fit.right <= fit.w, `The welcome does not fit ${w}x${h} without scrolling: ${JSON.stringify(fit)}`);
     await page.screenshot({ path: dist(`smoke-site-phone-${w}.png`) });

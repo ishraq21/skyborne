@@ -54,6 +54,38 @@ TOUR = ('Give me a quick tour of this small project. Start three Explore helpers
 CLEAN_UP = 'Now clean up with exactly this bash command and nothing else: rm -rf src/__pycache__'
 
 
+def trim_idle_start(rec, keep_ms=2000):
+    """Cut the idle time before the first prompt (the session sits there while the terminal starts up) down to
+    `keep_ms`, so the loop starts where something happens. Every time in the recording moves by the same amount."""
+    prompts = [e['t'] for e in rec['events'] if e['payload'].get('hook_event_name') == 'UserPromptSubmit']
+    cut = (min(prompts) if prompts else 0) - keep_ms
+    if cut <= 0:
+        return rec
+    before = [f for f in rec['frames'] if f['t'] <= cut]
+    frames = ([before[-1]] if before else []) + [f for f in rec['frames'] if f['t'] > cut]
+
+    def shift(v):
+        return v - cut if isinstance(v, (int, float)) else v
+
+    def doc(d):
+        d = dict(d)
+        for k in ('startedAt', 'updatedAt'):
+            if k in d:
+                d[k] = shift(d[k])
+        if isinstance(d.get('waiting'), dict):
+            d['waiting'] = {**d['waiting'], 'since': shift(d['waiting'].get('since'))}
+        d['agents'] = [{**a, 'activitySince': shift(a['activitySince'])} if 'activitySince' in a else a for a in d.get('agents', [])]
+        d['feed'] = [{**f, 'ts': shift(f['ts'])} if 'ts' in f else f for f in d.get('feed', [])]
+        if isinstance(d.get('ended'), dict):
+            d['ended'] = {**d['ended'], 'at': shift(d['ended'].get('at'))}
+        return d
+    rec = dict(rec)
+    rec['frames'] = [{**f, 't': max(0, f['t'] - cut), 'doc': doc(f['doc'])} for f in frames]
+    rec['events'] = [{**e, 't': max(0, e['t'] - cut)} for e in rec['events']]
+    rec['duration'] = rec['duration'] - cut
+    return rec
+
+
 def wait_until(check, timeout, step=0.1):
     end = time.monotonic() + timeout
     while time.monotonic() < end:
@@ -106,8 +138,18 @@ def quiet(app, seconds, timeout=120):
 
 def main():
     p = argparse.ArgumentParser(description=(__doc__ or '').splitlines()[0])
-    p.add_argument('--out', required=True, help='where to write the recording (it is not the squeezed demo file)')
+    p.add_argument('--out', help='where to write the recording')
+    p.add_argument('--trim', metavar='FILE', help='only cut the idle start off an existing recording file, in place (no Claude session)')
     args = p.parse_args()
+    if args.trim:
+        path = pathlib.Path(args.trim)
+        rec = json.loads(path.read_text(encoding='utf-8'))
+        trimmed = trim_idle_start(rec)
+        path.write_text(json.dumps(trimmed, ensure_ascii=False, separators=(',', ':')) + '\n', encoding='utf-8')
+        print(f"Trimmed {path}: {rec['duration'] / 1000:.0f} s -> {trimmed['duration'] / 1000:.0f} s")
+        return 0
+    if not args.out:
+        p.error('--out is required (or --trim FILE)')
     from skyborne import install, record
     from skyborne.server import App
 
@@ -177,7 +219,12 @@ def main():
     from skyborne.store import Store
     load = Store.load
     Store.load = lambda self, ids: (lambda r: (r[0], [f for f in r[1] if f.get('kind') != 'statusline'] + [f for _, f in readings]))(load(self, ids))
-    return record.main(ids[0], args.out, stand_ins=True, db_path=db)
+    code = record.main(ids[0], args.out, stand_ins=True, db_path=db)
+    if code == 0:  # the terminal takes a while to start: cut that idle time off the front
+        path = pathlib.Path(args.out)
+        rec = json.loads(path.read_text(encoding='utf-8'))
+        path.write_text(json.dumps(trim_idle_start(rec), ensure_ascii=False, separators=(',', ':')) + '\n', encoding='utf-8')
+    return code
 
 
 if __name__ == '__main__':
