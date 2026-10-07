@@ -99,16 +99,21 @@ function serve() {
       ok(await page.evaluate((t) => document.querySelector(`[data-tab="${t}"]`).getAttribute('aria-selected') === 'true', tab), `The ${tab} tab did not open`);
     }
     // the recorded request: a card whose buttons say Demo, and clicking sends nothing
-    await page.waitForSelector('#askList .ask:not(.terminal)', { timeout: 60000 * SLOW });
-    // all in one go: the card is on screen for about four seconds of each loop
+    // all in one go, waiting inside the page: the card is on screen for about four seconds of each loop, and a
+    // page drawn in software (CI) can stall for seconds, so waiting from here and looking afterwards loses the race
     const before = requests.length;
-    const card = await page.evaluate(() => {
-      const el = document.querySelector('#askList .ask'), note = () => el.querySelector('.ask-note').textContent;
+    const card = await page.evaluate(async (limit) => {
+      const t0 = performance.now();
+      while (!document.querySelector('#askList .ask:not(.terminal)')) {
+        if (performance.now() - t0 > limit) throw new Error('The recorded request never showed as a card');
+        await new Promise((r) => setTimeout(r, 15));
+      }
+      const el = document.querySelector('#askList .ask:not(.terminal)'), note = () => el.querySelector('.ask-note').textContent;
       const text = el.textContent;
       el.querySelector('[data-ans="allow"]').click(); const afterClick = note();
       el.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', bubbles: true })); const afterKey = note();
       return { text, afterClick, afterKey, all: document.getElementById('askList').textContent };
-    });
+    }, 130000 * SLOW);
     ok(/unittest|rm -rf/.test(card.text) && /Approve · Demo/.test(card.text) && /Deny · Demo/.test(card.text), 'The recorded request card is wrong: ' + card.text.slice(0, 160));
     ok(card.afterClick.startsWith('This is a demo'), 'Approve in the demo shows no note: ' + card.afterClick);
     ok(card.afterKey.startsWith('This is a demo'), 'The D key in the demo shows no note: ' + card.afterKey);
