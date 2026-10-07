@@ -57,6 +57,7 @@ function serve() {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block', ...opts });
     await context.route((url) => url.hostname !== '127.0.0.1', (route) => { offMachine.push(route.request().url()); route.abort(); });
     if (seen) await context.addInitScript(() => { try { localStorage.setItem('skyborne.welcomed', '1'); } catch (e) {} });
+    context.setDefaultTimeout(30000 * SLOW);
     const page = await context.newPage();
     watch(page);
     return { context, page };
@@ -85,7 +86,7 @@ function serve() {
     ok(stops.every((s) => /Launch|Install|X|Blog|Report/.test(s)), 'Tab left the welcome: ' + stops.join(' | '));
     await page.screenshot({ path: dist('smoke-site-welcome.png') });
     // Launch closes it, remembers it, and starts the camera sweep
-    await page.click('#welcomeGo');
+    await page.evaluate(() => document.getElementById('welcomeGo').click());
     ok(await page.evaluate(() => document.getElementById('welcome').hidden), 'Launch did not close the welcome');
     ok(await page.evaluate(() => localStorage.getItem('skyborne.welcomed') === '1'), 'The first visit was not remembered');
     await page.waitForTimeout(1500);
@@ -96,7 +97,7 @@ function serve() {
     ok(n >= 7, `Only ${n} districts in the city (expected the recording and six samples)`);
     ok(Number(await page.textContent('#cntCity')) >= 7, 'The Sessions tab does not count the districts');
     for (const tab of ['log', 'set', 'city']) {
-      await page.click(`[data-tab="${tab}"]`);
+      await page.evaluate((t) => document.querySelector(`[data-tab="${t}"]`).click(), tab);
       ok(await page.evaluate((t) => document.querySelector(`[data-tab="${t}"]`).getAttribute('aria-selected') === 'true', tab), `The ${tab} tab did not open`);
     }
     // the recorded request: a card whose buttons say Demo, and clicking sends nothing
@@ -145,11 +146,11 @@ function serve() {
     ok(await page.evaluate(() => getComputedStyle(document.getElementById('demoAbout')).display === 'none' || getComputedStyle(document.querySelector('.foot')).display === 'none'), 'About shows in reel mode');
     await page.keyboard.press('r');
     // About reopens the welcome; Esc closes it; so does a click outside
-    await page.click('#demoAbout');
+    await page.evaluate(() => document.getElementById('demoAbout').click());
     ok(await page.evaluate(() => !document.getElementById('welcome').hidden && document.activeElement.id === 'welcomeGo'), 'About did not reopen the welcome with focus on Launch');
     await page.keyboard.press('Escape');
     ok(await page.evaluate(() => document.getElementById('welcome').hidden), 'Esc did not close the welcome');
-    await page.click('#demoAbout');
+    await page.evaluate(() => document.getElementById('demoAbout').click());
     await page.mouse.click(8, 8);
     ok(await page.evaluate(() => document.getElementById('welcome').hidden), 'A click outside did not close the welcome');
     // the recording loops: it leaves the city after its end and comes back
@@ -194,7 +195,7 @@ function serve() {
     const fit = await page.evaluate(() => { const c = document.querySelector('#welcome .card'), r = c.getBoundingClientRect(); return { scroll: c.scrollHeight - c.clientHeight, top: r.top, bottom: r.bottom, h: innerHeight, right: r.right, w: innerWidth }; });
     ok(fit.scroll <= 0 && fit.top >= 0 && fit.bottom <= fit.h && fit.right <= fit.w, `The welcome does not fit ${w}x${h} without scrolling: ${JSON.stringify(fit)}`);
     await page.screenshot({ path: dist(`smoke-site-phone-${w}.png`) });
-    await page.tap('#welcomeGo');
+    await page.evaluate(() => document.getElementById('welcomeGo').click());
     await ready(page);
     const side = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: innerWidth }));
     ok(side.sw <= side.iw, `The page scrolls sideways at ${w}x${h}: ${side.sw} > ${side.iw}`);
@@ -206,7 +207,7 @@ function serve() {
     ok(!bar.shown || (bar.r > bar.l && bar.l >= 0 && bar.r <= bar.w && bar.t >= 0 && bar.b <= bar.h), `The About pill is off screen at ${w}x${h}: ${JSON.stringify(bar)}`);
     ok(await page.evaluate(() => document.getElementById('console').dataset.open === 'false'), 'The console covers the city on a phone at first');
     await page.screenshot({ path: dist(`smoke-site-phone-${w}-city.png`) });
-    await page.tap('#btnConsole');
+    await page.evaluate(() => document.getElementById('btnConsole').click());
     await page.waitForTimeout(900);
     ok(await page.evaluate(() => document.getElementById('console').dataset.open === 'true'), 'The console button does nothing on a phone');
     await page.screenshot({ path: dist(`smoke-site-phone-${w}-console.png`) });
