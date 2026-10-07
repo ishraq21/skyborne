@@ -72,6 +72,9 @@ const store = {
   set(k, v) { try { localStorage.setItem('skyborne.' + k, JSON.stringify(v)); } catch (e) {} },
 };
 
+// set only by the static site's build (page/demo): its recording, extra sample towns and wording; null everywhere else
+const DEMO = window.__skyborneDemo || null;
+
 // ---------------- viewer prefs ----------------
 // the name on City Hall, if the user sets one ('Mayor' alone, which older pages saved for none, counts as none)
 const mayorName = (v) => { v = String(v ?? '').trim().slice(0, 24); return v === 'Mayor' ? '' : v; };

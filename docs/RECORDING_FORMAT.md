@@ -9,7 +9,8 @@ skyborne record <session id, or its start> --out demo.json [--stand-ins]
 
 Without a session id it lists the most recent sessions. Open the city, go to **Settings →
 Recording → Play…** and pick the file; it plays on a loop until **Back to live**. A page can also
-play one at load with `?play=<a file on the same server>` (for the demo site).
+play one at load with `?play=<a file on the same server>`. The demo site's recording
+(`page/demo/recording.json`, made by `scripts/make_demo_recording.py`) is built into its page instead.
 
 ## What's taken out
 

@@ -99,7 +99,7 @@ function startSamples() {
   if (samples.timer) return;
   const r = rng(Date.now() % 100000);
   const now = Date.now();
-  const towns = [['atlas-api', 'Skybot'], ['pixel-forge', 'Skybot'], ['dataport', 'Skybot'], ['skyline-ui', 'Skybot']];
+  const towns = [['atlas-api', 'Skybot'], ['pixel-forge', 'Skybot'], ['dataport', 'Skybot'], ['skyline-ui', 'Skybot'], ...(DEMO?.towns || [])];
   const lines = {
     bash: ['$ npm test', '$ cargo build --release', '$ pytest -q', '$ git diff --stat'], edit: ['Editing router.ts', 'Editing schema.sql', 'Editing App.tsx', 'Editing main.rs'],
     read: ['Reading README.md', 'Reading config.yaml', 'Reading auth.py'], search: ['Searching handleLogin', 'Searching TODO', 'Searching useState'],

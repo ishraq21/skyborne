@@ -69,6 +69,11 @@ jobs:
         working-directory: page
         env:
           SKYBORNE_PYTHON: python
+      - name: The demo site builds and works
+        run: |
+          node build.js --site
+          node tests/site-smoke.js
+        working-directory: page
       - name: The Python package carries the page
         run: |
           python -m pip wheel . --no-deps -q -w wheel

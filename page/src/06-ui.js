@@ -418,9 +418,9 @@ function updateAskCard(ui) {
   q('.ask-detail').hidden = hide; q('.ask-detail').textContent = hide ? '' : det.text;
   const yes = q('[data-ans="allow"]'), no = q('[data-ans="deny"]');
   yes.hidden = no.hidden = !open; yes.disabled = no.disabled = !!ui.busy;
-  yes.innerHTML = (ui.busy === 'allow' ? 'Approving…' : 'Approve') + '<kbd>A</kbd>';
-  no.innerHTML = (ui.busy === 'deny' ? 'Denying…' : 'Deny') + '<kbd>D</kbd>';
-  q('.ask-note').textContent = open ? ui.note : ui.note || (a.state === 'sent' || ui.sent ? 'Sent. Waiting for Claude Code…' : 'Answer in the terminal');
+  yes.innerHTML = (ui.busy === 'allow' ? 'Approving…' : a.demo ? DEMO.yes : 'Approve') + '<kbd>A</kbd>';
+  no.innerHTML = (ui.busy === 'deny' ? 'Denying…' : a.demo ? DEMO.no : 'Deny') + '<kbd>D</kbd>';
+  q('.ask-note').textContent = open ? ui.note || (a.demo ? DEMO.hint : '') : ui.note || (a.state === 'sent' || ui.sent ? 'Sent. Waiting for Claude Code…' : 'Answer in the terminal');
 }
 // a card that has to say something before it goes ("Already answered in the terminal") stays a moment
 function closeAskSaying(ui, note) {
@@ -491,6 +491,7 @@ async function setNotify(on) {
 async function answerAsk(id, decision) {
   const ui = askUI.get(id);
   if (!ui || ui.busy || ui.a.state !== 'open') return;
+  if (ui.a.demo) { ui.note = DEMO.note; updateAskCard(ui); return; }  // the site's recorded request: nothing to send
   ui.busy = decision; ui.note = ''; updateAskCard(ui);
   try {
     await source.answer(id, decision);  // sent: the card waits for Claude Code's word (`answer`)
@@ -712,7 +713,7 @@ function step(now) {
   updateTransit(dt);
   glitter.update(dt); confetti.update(dt); puffs.update(dt);
   if (intro.on) {
-    if (!intro.start) intro.start = now;
+    if (!intro.start || DEMO?.holding) intro.start = now;  // the site holds the opening pose while its welcome shows
     intro.t = (now - intro.start) / 4200; const k = easeInOut(Math.min(1, intro.t));
     const pf = camera.aspect < 0.9 ? 1.45 : 1;
     camera.position.set(lerp(-70, 0, k), lerp(190, 84 * pf, k), lerp(300, 112 * pf, k)); controls.target.set(0, lerp(-10, 1, k), 0);
@@ -873,6 +874,20 @@ function rebase(doc, base) {
     feed: (doc.feed || []).map((f) => ({ ...f, ts: t(f.ts) })),
     ...(doc.ended ? { ended: { ...doc.ended, at: t(doc.ended.at) } } : {}) };
 }
+// a recorded request that waits in a frame becomes a card. Its command comes from the recording's own
+// PermissionRequest events, in order; the id stays the same for as long as the request waits.
+function recordedAsks(rec, docs, base) {
+  const requests = (rec.events || []).filter((e) => e?.payload?.hook_event_name === 'PermissionRequest');
+  const out = [];
+  for (const [sid, doc] of docs) {
+    const w = doc.waiting;
+    if (!w) continue;
+    // the request that opened at this time in the recording (the frame's `since` was moved to now by `rebase`)
+    const at = w.since - base, mine = requests.find((e) => Math.abs(e.t - at) < 1000);
+    out.push({ id: `${sid}:${w.agent}:${w.since}`, session: sid, agent: w.agent, tool: w.tool, input: mine?.payload.tool_input || {}, since: w.since, state: 'open', demo: true });
+  }
+  return out;
+}
 function playerSource(rec) {
   let timers = [];
   return {
@@ -881,8 +896,8 @@ function playerSource(rec) {
       on.names({}); on.status('replay');
       const play = () => {
         const docs = new Map(), base = Date.now();
-        for (const f of rec.frames) timers.push(setTimeout(() => { docs.set(f.id || rec.session.id, rebase(f.doc, base)); on.docs(docs); }, f.t));
-        timers.push(setTimeout(() => { on.docs(new Map()); timers.push(setTimeout(play, 3000)); }, (rec.duration || 0) + 5000));
+        for (const f of rec.frames) timers.push(setTimeout(() => { docs.set(f.id || rec.session.id, rebase(f.doc, base)); on.docs(docs); if (DEMO) on.asks(recordedAsks(rec, docs, base)); }, f.t));
+        timers.push(setTimeout(() => { on.docs(new Map()); if (DEMO) on.asks([]); timers.push(setTimeout(play, 3000)); }, (rec.duration || 0) + 5000));
       };
       play();
     },
@@ -909,6 +924,7 @@ function playRecording(text) {
   toast('Playing the recording'); return true;
 }
 function backToLive() {
+  if (DEMO) { useSource(playerSource(DEMO.rec)); $('btnBackLive').hidden = true; return; }  // the static site has no server to go back to
   connect();
   playing = null; $('btnBackLive').hidden = true; showRecNote();
 }
@@ -931,10 +947,15 @@ window.__skyborne = { composer, mayorName, customLeadName, city, director, trans
   // for the smoke tests: the pure helpers, and the console's own drawing
   isLive, isBusy, visibleDocs, layoutTimeline, fmtDur, detail, openDetail, closeDetail, showDocs, renderUI, drawLog, drawSteps, logRows: () => logRows };
 requestAnimationFrame(frame);
-connect();
-// ?play=<a file on this server>: play a recording at once (the demo site works this way)
+if (DEMO) {
+  // the static site: its recording plays on a loop beside the sample districts, and nothing connects to a server
+  setSamples(true);
+  useSource(playerSource(DEMO.rec));
+  playing = DEMO.rec.session.title || 'a recording'; showRecNote();
+} else connect();
+// ?play=<a file on this server>: play a recording at once (a file from `skyborne record`)
 const playUrl = new URLSearchParams(location.search).get('play');
-if (playUrl) {
+if (playUrl && !DEMO) {
   try {
     const u = new URL(playUrl, location.href);
     if (u.origin === location.origin) fetch(u).then((r) => r.text()).then(playRecording).catch(() => toast('Could not load that recording.'));

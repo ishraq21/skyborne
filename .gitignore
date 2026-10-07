@@ -31,3 +31,4 @@ page/dist/smoke*.png
 
 # Brand work (logo drafts, brand guide): kept local, never committed
 /brand/
+page/site/

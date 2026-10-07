@@ -41,6 +41,7 @@ node build.js                                     # builds the city into skyborn
 node dev/serve.js                                 # a preview with a fake city at http://127.0.0.1:8000/
 node dev/icons.js                                 # remakes the tab icon's PNGs after a change to src/icons/icon.svg
 node tests/smoke.js && node tests/live-smoke.js   # browser tests: the preview, then the real server
+node build.js --site && node tests/site-smoke.js  # the demo site (page/site, not committed) and its test
 ```
 
 Some of those lines are optional:

@@ -46,4 +46,8 @@ does the rest, using PyPI trusted publishing (no API tokens anywhere).
    GitHub Release for the tag, with that version's section of CHANGELOG.md as its notes, followed by
    a link to the PyPI page.
 
+Pushing the tag also publishes the demo site (the **Demo site** workflow, [pages.yml](../.github/workflows/pages.yml)), and it
+can be run by hand from Actions at any time. It needs no approval, but the `github-pages` environment (Settings, Environments)
+must allow deployments from tags `v*` as well as `main`, or a tag run is refused. It runs beside the release, not after it.
+
 A version on PyPI can never be replaced or reused. If something is wrong, publish a new version.
