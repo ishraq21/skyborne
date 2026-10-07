@@ -5,6 +5,9 @@
   /* "About" in the footer, a pill after the GitHub icon that reopens the welcome */
   .foot .about{ font: inherit; font-weight: 500; flex: none; display: inline-flex; align-items: center; height: 31px; padding: 0 14px; border-radius: 999px; color: var(--fg); cursor: pointer; }
   .foot .about:hover{ background: var(--raised); }
+  /* the GitHub icon says "GitHub" beside it here, like the button it replaces */
+  .foot .gh.named{ width: auto; padding: 0 14px 0 11px; gap: 7px; font-size: 12.5px; font-weight: 600; }
+  @media (max-width: 520px){ body .foot{ flex-wrap: wrap; height: auto; right: 16px; row-gap: 8px; } }  /* four pills don't fit one row on a phone */
   .welcome{ position: fixed; z-index: 40; inset: 0; display: flex; overflow-y: auto; padding: 16px; background: rgba(244, 243, 239, .5); backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); }
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){ .welcome{ background: rgba(244, 243, 239, .94); } }
   .welcome a.btn, .welcome button.btn{ font: inherit; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); text-decoration: none; cursor: pointer; }
@@ -37,10 +40,10 @@
   <div class="card">
     <img src="{{LOGO}}" alt="" width="46" height="46">
     <p class="hi" id="welcomeTitle">Hi, I'm Mirza,</p>
-    <p>I built Skyborne to see what my Claude Code agents were really doing: which ones are working, stuck or waiting on me, which tools and helpers they reach for, and where every token and cost goes. It turned into a city.</p>
+    <p>I built Skyborne for LLM observability and agent tracing. I wanted to see what my Claude Code agents were really doing: which ones are working, stuck or waiting on me, every step they take and how long it takes, which tools and helpers they reach for, and where the tokens and cost go. It turned into a city.</p>
     <p>This is a demo. It's playing back a recorded session. Nothing here is connected to your Claude Code. To watch your own agents live, install it from GitHub. It runs entirely on your computer.</p>
     <p>It's early, so expect rough edges. If something breaks, open an issue. And if you like it, a star helps a lot.</p>
-    <p class="bye">Thank you for checking out Skyborne!<br>Best,<br>Mirza</p>
+    <p class="bye">Thank you for checking out Skyborne!<br>Best,</p>
     <div class="acts">
       <button type="button" class="btn go" id="welcomeGo">Launch Skyborne</button>
       <a class="btn alt" href="https://github.com/ishraq21/skyborne#install" target="_blank" rel="noopener noreferrer">Install on GitHub</a>
@@ -93,6 +96,10 @@ window.__skyborneDemo = {
   function addAbout() {
     var foot = document.querySelector('.foot');
     if (!foot) return;
+    var credit = foot.querySelector('.credit');  // "Skyborne by Mirza Ishraq" is "By Mirza Ishraq" on this site
+    if (credit && credit.firstChild && credit.firstChild.nodeType === 3) credit.firstChild.nodeValue = 'By ';
+    var gh = foot.querySelector('.gh');
+    if (gh) { var t = document.createElement('span'); t.textContent = 'GitHub'; gh.appendChild(t); gh.classList.add('named'); }
     var b = document.createElement('button');
     b.type = 'button'; b.id = 'demoAbout'; b.className = 'credit glass about'; b.textContent = 'About';
     b.addEventListener('click', open);

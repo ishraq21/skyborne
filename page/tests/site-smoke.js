@@ -134,6 +134,8 @@ function serve() {
     const foot = await page.$$eval('.foot > *', (els) => els.map((e) => (e.classList.contains('gh') ? 'github' : e.id === 'demoAbout' ? 'about' : e.className.split(' ')[0])));
     ok(foot[foot.length - 1] === 'about' && foot[foot.length - 2] === 'github', 'About is not the last pill, after the GitHub icon: ' + foot.join(', '));
     ok(!(await page.textContent('body')).includes('Newsletter'), 'A Newsletter button is still on the page');
+    ok((await page.textContent('.foot .credit')).trim() === 'By Mirza Ishraq', 'The footer credit is not "By Mirza Ishraq": ' + (await page.textContent('.foot .credit')));
+    ok(/LLM observability/.test(await page.textContent('#welcome')) && /agent tracing/.test(await page.textContent('#welcome')) && !/Best,\s*Mirza/.test(await page.textContent('#welcome')), 'The welcome copy is not as asked');
     const links = await page.$$eval('.foot a, #welcome a', (as) => as.map((a) => a.href));
     ok(links.includes('https://github.com/ishraq21/skyborne') && links.includes('https://github.com/ishraq21/skyborne#install') && links.includes('https://x.com/myspaceio')
       && links.some((l) => l.includes('/issues/new?template=bug_report.md')), 'A link in the footer or the welcome is wrong: ' + links.join(' '));
@@ -196,7 +198,10 @@ function serve() {
     await ready(page);
     const side = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: innerWidth }));
     ok(side.sw <= side.iw, `The page scrolls sideways at ${w}x${h}: ${side.sw} > ${side.iw}`);
-    // the page hides its whole footer while a "needs you" pill takes the phone's bottom edge: then there is nothing to place
+    // the footer is shown for this check (the page hides it while a "needs you" pill takes a phone's bottom edge): every pill stays on screen
+    await page.addStyleTag({ content: '.foot{display:flex !important}' });
+    const pills = await page.$$eval('.foot > *', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right)]; }));
+    ok(pills.length >= 4 && pills.every(([l, r]) => l >= 0 && r <= w), `A footer pill runs off the screen at ${w}x${h}: ${JSON.stringify(pills)}`);
     const bar = await page.evaluate(() => { const f = document.querySelector('.foot'), r = document.getElementById('demoAbout').getBoundingClientRect(); return { shown: getComputedStyle(f).display !== 'none', l: r.left, r: r.right, t: r.top, b: r.bottom, w: innerWidth, h: innerHeight }; });
     ok(!bar.shown || (bar.r > bar.l && bar.l >= 0 && bar.r <= bar.w && bar.t >= 0 && bar.b <= bar.h), `The About pill is off screen at ${w}x${h}: ${JSON.stringify(bar)}`);
     ok(await page.evaluate(() => document.getElementById('console').dataset.open === 'false'), 'The console covers the city on a phone at first');
