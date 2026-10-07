@@ -903,7 +903,8 @@ function playerSource(rec) {
     },
     async rename() { throw Object.assign(new Error('rename'), { code: 'replay' }); },
     async answer() { throw Object.assign(new Error('answer'), { code: 'replay' }); },
-    async detail(id) { return detailFromDoc(id, city.allDocs.get(id)); },  // a recording has only its documents
+    // a recording has only its documents; on the demo site a sample district has its own, made in the page
+    async detail(id) { return detailFromDoc(id, city.allDocs.get(id) || (DEMO ? samples.docs.find((d) => d.id === id)?.data() : undefined)); },
     async step() { return null; },
     stop() { timers.forEach(clearTimeout); timers = []; },
   };

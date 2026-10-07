@@ -4,8 +4,8 @@
 
 Needs a logged-in `claude` on this machine and spends a little usage (a small model, about two minutes).
 A private Skyborne server runs on a free port with its own database in a temp folder, and `claude` runs in a
-pseudo-terminal (tests/live/driver.py) with that server's plugin only. The session: three Explore helpers
-read three folders, one Bash request is approved from Skyborne, another is denied from Skyborne (answered
+pseudo-terminal (tests/live/driver.py) with that server's plugin and status line only. The session: three Explore helpers
+read three folders (after a quick greeting, so the status line has reported early), one Bash request is approved from Skyborne, another is denied from Skyborne (answered
 the way the page does: POST /api/answer with the launch token). Any other request stops the run. Then `skyborne record --stand-ins` writes
 the file. Read what it prints before using the recording: it lists every line the page will show.
 """
@@ -47,6 +47,7 @@ FILES = {
                            '        s.add("Emma", "Jane Austen")\n        self.assertEqual(by_author(s, "Jane Austen"), ["Emma"])\n\n\n'
                            'if __name__ == "__main__":\n    unittest.main()\n',
 }
+GREETING = 'Hi! Please say hello in one short sentence.'  # a quick first turn: Claude Code's status line (cost, context) reports after a turn ends
 TOUR = ('Give me a quick tour of this small project. Start three Explore helpers in parallel, one each for the src, docs '
         'and tests folders, and have each report in two sentences what it found. Then run the tests with exactly this '
         'bash command: python3 -m unittest discover -s tests -q')
@@ -118,17 +119,31 @@ def main():
         f.write_text(text)
     (project / '.claude').mkdir()
     # the plugin installed for real use stays off here: only this run's plugin sends to this run's server
-    # the helpers' read-only commands run without asking; only the test run and the clean-up are asked about
-    settings = {'enabledPlugins': {'skyborne@skills-dir': False},
-                'permissions': {'allow': [f'Bash({c}:*)' for c in ('find', 'ls', 'cat', 'head', 'tail', 'wc', 'tree', 'grep', 'pwd')]}}
-    (project / '.claude' / 'settings.local.json').write_text(json.dumps(settings))
-
     db = BASE / 'skyborne.db'
     app = App(port=0, db_path=db)
     app.start()
+    # The database keeps only the newest status line reading per session, so `skyborne record` would save one,
+    # stamped at the very end. Keep every reading as it arrives (when cost or context changed) and add them to the recording.
+    readings = []
+    keep_latest = app.store.set_statusline
+
+    def keep_every(session_id, received_at, payload):
+        key = (payload.get('cost'), payload.get('context_window'))
+        if not readings or key != readings[-1][0]:
+            readings.append((key, {'ts': received_at, 'session_id': session_id, 'kind': 'statusline', 'payload': payload}))
+        return keep_latest(session_id, received_at, payload)
+    app.store.set_statusline = keep_every
     install.write_plugin(BASE / 'plugin', app.port)
+    # the helpers' read-only commands run without asking; only the test run and the clean-up are asked about.
+    # The status line (Claude Code's own cost and context figures, which the city's Usage and Context show) is
+    # switched on for this project only, sending to this run's server.
+    settings = {'enabledPlugins': {'skyborne@skills-dir': False},
+                'permissions': {'allow': [f'Bash({c}:*)' for c in ('find', 'ls', 'cat', 'head', 'tail', 'wc', 'tree', 'grep', 'pwd')]},
+                'statusLine': {'type': 'command', 'command': install.statusline_command(app.port)}}
+    (project / '.claude' / 'settings.local.json').write_text(json.dumps(settings))
+    # its own Skyborne folder: the status line command never looks at this person's real install
     s = Session(['claude', '--plugin-dir', str(BASE / 'plugin'), '--permission-mode', 'default', '--model', MODEL],
-                cwd=str(project), env=clean_env())
+                cwd=str(project), env=clean_env({'SKYBORNE_HOME': str(BASE / 'home')}))
     try:
         if s.wait_for(r'(?i)trust\s*(the\s*files\s*in\s*)?this\s*folder|do\s*you\s*trust', 20):
             time.sleep(1)
@@ -138,6 +153,8 @@ def main():
             s.send('\r')
         time.sleep(6)
 
+        s.type_line(GREETING)
+        quiet(app, 6)
         s.type_line(TOUR)
         if not settle(app, 'unittest', 'allow', 240):
             print(s.text()[-1800:])
@@ -156,6 +173,10 @@ def main():
         ids = [r[0] for r in con.execute('SELECT DISTINCT session_id FROM events WHERE session_id IS NOT NULL')]
     if len(ids) != 1:
         raise SystemExit(f'Expected one session in the database, found {len(ids)}.')
+    print(f'{len(readings)} status line readings kept (cost and context as they grew)')
+    from skyborne.store import Store
+    load = Store.load
+    Store.load = lambda self, ids: (lambda r: (r[0], [f for f in r[1] if f.get('kind') != 'statusline'] + [f for _, f in readings]))(load(self, ids))
     return record.main(ids[0], args.out, stand_ins=True, db_path=db)
 
 

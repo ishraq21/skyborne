@@ -122,6 +122,18 @@ function serve() {
     ok(!/Couldn't send/.test(card.all), 'The demo card said it could not send');
     await page.waitForTimeout(500);
     ok(requests.length === before, 'Answering the demo card sent a request');
+    // Usage and Context show Claude Code's own figures from the recording, not dashes
+    const tiles = await page.waitForFunction(() => { const u = document.getElementById('sUse').textContent, c = document.getElementById('sCtx').textContent; return /^\$\d/.test(u) && /^\d+%$/.test(c) ? [u, c] : null; }, null, { timeout: 120000 * SLOW }).then((h) => h.jsonValue(), () => null);
+    ok(tiles, 'Usage and Context never showed figures: ' + await page.evaluate(() => document.getElementById('sUse').textContent + ' / ' + document.getElementById('sCtx').textContent));
+    // a sample district opens a detail with steps in it, not "Nothing is stored"
+    const sampleId = await page.evaluate(() => [...window.__skyborne.city.districts.keys()].find((k) => String(k).startsWith('sample-')));
+    await page.evaluate((id) => window.__skyborne.openDetail(window.__skyborne.city.districts.get(id)), sampleId);
+    await page.waitForSelector('#sessDetail:not([hidden])', { timeout: 10000 });
+    await page.waitForFunction(() => !/Loading/.test(document.getElementById('sessDetail').textContent), null, { timeout: 15000 * SLOW }).catch(() => {});
+    const sample = await page.evaluate(() => ({ text: document.getElementById('sessDetail').textContent, steps: window.__skyborne.detail.data?.steps?.length || 0 }));
+    ok(!/Nothing is stored/.test(sample.text) && sample.steps > 0, `A sample district's detail is empty (${sample.steps} steps): ` + sample.text.slice(0, 120));
+    await page.screenshot({ path: dist('smoke-site-sample-detail.png') });
+    await page.evaluate(() => window.__skyborne.closeDetail());
     // a session's detail opens from the recording
     const recId = await page.evaluate(() => [...window.__skyborne.city.districts.keys()].find((k) => !String(k).startsWith('sample-')));
     await page.evaluate((id) => window.__skyborne.openDetail(window.__skyborne.city.districts.get(id)), recId);
