@@ -93,9 +93,11 @@ function serve() {
     ok(JSON.stringify(await cam(page)) !== JSON.stringify(held2), 'The camera sweep did not start after Launch');
     // the console is open and the city is full: the recorded session and six sample districts
     ok(await page.evaluate(() => document.getElementById('console').dataset.open === 'true'), 'The console is not open on a desktop');
-    const n = await page.evaluate(() => window.__skyborne.city.districts.size);
+    // (waited for, not read once: for a few seconds at the end of each loop the recording is out of the city)
+    const n = await page.waitForFunction(() => { const n = window.__skyborne.city.districts.size; return n >= 7 && n; }, null, { timeout: 20000 * SLOW })
+      .then((h) => h.jsonValue(), () => page.evaluate(() => window.__skyborne.city.districts.size));
     ok(n >= 7, `Only ${n} districts in the city (expected the recording and six samples)`);
-    ok(Number(await page.textContent('#cntCity')) >= 7, 'The Sessions tab does not count the districts');
+    ok(await page.waitForFunction(() => Number(document.getElementById('cntCity').textContent) >= 7, null, { timeout: 20000 * SLOW }).then(() => true, () => false), 'The Sessions tab does not count the districts');
     for (const tab of ['log', 'set', 'city']) {
       await page.evaluate((t) => document.querySelector(`[data-tab="${t}"]`).click(), tab);
       ok(await page.evaluate((t) => document.querySelector(`[data-tab="${t}"]`).getAttribute('aria-selected') === 'true', tab), `The ${tab} tab did not open`);
@@ -135,11 +137,30 @@ function serve() {
     ok(!/Nothing is stored/.test(sample.text) && sample.steps > 0, `A sample district's detail is empty (${sample.steps} steps): ` + sample.text.slice(0, 120));
     await page.screenshot({ path: dist('smoke-site-sample-detail.png') });
     await page.evaluate(() => window.__skyborne.closeDetail());
-    // a session's detail opens from the recording
-    const recId = await page.waitForFunction(() => [...window.__skyborne.city.districts.entries()].find(([k, d]) => !String(k).startsWith('sample-') && !d.leaving)?.[0], null, { timeout: 120000 * SLOW }).then((h) => h.jsonValue());
-    await page.evaluate((id) => window.__skyborne.openDetail(window.__skyborne.city.districts.get(id)), recId);
-    await page.waitForSelector('#sessDetail:not([hidden])', { timeout: 20000 * SLOW });
-    ok(await page.waitForFunction(() => /Prompt 1/.test(document.getElementById('sessDetail').textContent), null, { timeout: 20000 * SLOW }).then(() => true, () => false), 'The recorded session\'s detail does not show its prompt');
+    // a session's detail opens from the recording and shows its prompt
+    // all in one go, inside the page, and again if the recording ends meanwhile: at its end (once a loop, about every
+    // 65 s) the player clears the session, which closes its open detail, so opening it and then waiting from here can lose that race
+    const rec = await page.evaluate(async (limit) => {
+      const S = window.__skyborne, panel = document.getElementById('sessDetail'), t0 = performance.now(), pause = () => new Promise((r) => setTimeout(r, 50));
+      let opened = null;
+      while (performance.now() - t0 < limit) {
+        const found = [...S.city.districts.entries()].find(([k, d]) => !String(k).startsWith('sample-') && !d.leaving);
+        if (!found) { await pause(); continue; }
+        S.openDetail(found[1]); opened = found[0];
+        if (panel.hidden) return { id: opened, prompt: false, text: '(the detail did not open)' };
+        while (!panel.hidden && performance.now() - t0 < limit) {
+          if (/Prompt 1/.test(panel.textContent)) return { id: opened, prompt: true };
+          await pause();
+        }
+        // only the recording's end may close it (its session leaves the city then): any other close is a fault, not a retry
+        const d = S.city.districts.get(opened);
+        if (panel.hidden && d && !d.leaving) return { id: opened, prompt: false, text: '(the detail closed while its session was still in the city)' };
+      }
+      return { id: opened, prompt: false, text: panel.hidden ? '(the detail closed)' : panel.textContent.slice(0, 160) };
+    }, 120000 * SLOW);
+    if (!rec.id) throw new Error('The recorded session never showed up in the city');
+    const recId = rec.id;
+    ok(rec.prompt, 'The recorded session\'s detail does not show its prompt: ' + rec.text);
     await page.screenshot({ path: dist('smoke-site-detail.png') });
     await page.evaluate(() => window.__skyborne.closeDetail());
     // the footer: About is its own pill after the GitHub icon, and no overlay card is left on the page
@@ -172,9 +193,9 @@ function serve() {
     const back = await page.waitForFunction((id) => window.__skyborne.city.districts.has(id), recId, { timeout: 60000 * SLOW }).then(() => true, () => false);
     ok(back, 'The recording did not start over');
     // "Back to live" (reachable after playing a file from Settings) returns to the recording, never to a server
+    // the old district sinks for 2.4 s before the recording starts over, so the new one is waited for, not the old one still in the map
     await page.evaluate(() => window.__skyborne.backToLive());
-    await page.waitForTimeout(1500);
-    ok(await page.evaluate((id) => window.__skyborne.city.districts.has(id), recId) || await page.waitForFunction((id) => window.__skyborne.city.districts.has(id), recId, { timeout: 15000 * SLOW }).then(() => true, () => false), 'Back to live did not bring the recording back');
+    ok(await page.waitForFunction((id) => { const d = window.__skyborne.city.districts.get(id); return !!d && !d.leaving; }, recId, { timeout: 15000 * SLOW }).then(() => true, () => false), 'Back to live did not bring the recording back');
     ok(!(await page.evaluate(() => document.querySelector('.empty-note')?.textContent || '')).includes("Can't reach"), 'The page says it cannot reach Skyborne');
     await context.close();
   }
