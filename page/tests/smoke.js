@@ -631,6 +631,29 @@ const dist = (f) => path.resolve(__dirname, '../dist', f);
     && [1440, 1280, 1000, 800, 390].every((w) => follow[w].label) && !follow[320].label;  // a small phone: the logo alone
   if (!fine) errors.push('The Follow on X and GitHub buttons: ' + JSON.stringify(follow));
 
+  // the × in the console's header hides the console at every size (on a phone the toolbar icon is easy to miss):
+  // it is on top and big enough to tap, it has a name, it hides the console, and focus goes to the toolbar button, which
+  // brings the console back
+  for (const [w, h, min] of [[1280, 800, 28], [390, 844, 36]]) {
+    await page.setViewportSize({ width: w, height: h }); await page.waitForTimeout(400);
+    await page.evaluate(() => { if (document.getElementById('console').dataset.open !== 'true') document.getElementById('btnConsole').click(); });
+    await page.waitForFunction(() => document.getElementById('console').dataset.open === 'true', null, { timeout: 15000 });
+    await page.waitForTimeout(600);  // the slide-in
+    const x = await page.evaluate((min) => {
+      const b = document.getElementById('btnConsoleClose'), r = b.getBoundingClientRect(), top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return { box: [r.left + r.width / 2, r.top + r.height / 2], named: b.getAttribute('aria-label') === 'Hide console', big: r.width >= min && r.height >= min,
+        reachable: !!top && b.contains(top), onScreen: r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight };
+    }, min);
+    await page.mouse.click(x.box[0], x.box[1]);
+    await page.waitForFunction(() => document.getElementById('console').dataset.open === 'false', null, { timeout: 15000 }).catch(() => {});
+    const after = await page.evaluate(() => ({ open: document.getElementById('console').dataset.open, pressed: document.getElementById('btnConsole').getAttribute('aria-pressed'), focus: document.activeElement?.id }));
+    await page.evaluate(() => document.getElementById('btnConsole').click());
+    await page.waitForFunction(() => document.getElementById('console').dataset.open === 'true', null, { timeout: 15000 }).catch(() => {});
+    const back = await page.evaluate(() => document.getElementById('console').dataset.open);
+    if (!x.named || !x.big || !x.reachable || !x.onScreen || after.open !== 'false' || after.pressed !== 'false' || after.focus !== 'btnConsole' || back !== 'true') errors.push(`The console's × button at ${w}x${h}: ${JSON.stringify({ x, after, back })}`);
+  }
+  await page.setViewportSize({ width: 1280, height: 800 }); await page.waitForTimeout(400);
+
   // the name on the 3D signs: no text pixels at the edges of the flag and blimp textures, and the
   // ring's longest line fits its texture even in the display font
   await page.evaluate(() => document.fonts.load('800 112px Unbounded'));

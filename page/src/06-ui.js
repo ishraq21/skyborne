@@ -574,6 +574,11 @@ async function toggleFull() {
 function setSamples(on) { prefs.samples = on; if (on) startSamples(); else stopSamples(); setLive(city.status); uiDirty = true; }
 
 $('btnConsole').addEventListener('click', () => setConsole(!prefs.console));
+$('btnConsoleClose').addEventListener('click', () => {
+  const had = document.activeElement === $('btnConsoleClose');
+  setConsole(false);
+  if (had) $('btnConsole').focus({ preventScroll: true });  // keyboard or mouse: focus leaves the hidden sheet for the toolbar button, which brings it back (a tap that never focused the × leaves focus alone, so Safari shows no ring)
+});
 $('btnTime').addEventListener('click', cycleTime);
 $('btnSafe').addEventListener('click', () => setSafe(!prefs.safe));
 $('btnReel').addEventListener('click', () => setReel(!director.on));

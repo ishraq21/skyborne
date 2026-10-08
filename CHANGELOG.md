@@ -8,6 +8,9 @@ notes are the version's section here.
 
 ## [Unreleased]
 
+**Console**
+- The console has an × in its header that hides it, at every screen size. On a phone the toolbar icon that hides the console was easy to miss.
+
 ## [0.1.1] - 2026-10-07
 
 **Version option**
