@@ -11,6 +11,10 @@ notes are the version's section here.
 **Console**
 - The console has an × in its header that hides it, at every screen size. On a phone the toolbar icon that hides the console was easy to miss.
 
+**Camera**
+- Clicking a Skybot or a district, or "Back to the skyline", no longer swings the camera over the clouds on the way. It now keeps facing where it is flying.
+- On a phone held upright, with the console open, the picture sits in the strip above the console sheet, so a Skybot you click is no longer hidden behind the sheet. This applies to every view while the console is open, not only a click on a Skybot. A phone held sideways is not fixed yet.
+
 ## [0.1.1] - 2026-10-07
 
 **Version option**

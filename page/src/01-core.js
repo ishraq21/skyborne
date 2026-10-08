@@ -221,12 +221,12 @@ function resize() {
 }
 new ResizeObserver(() => resize()).observe(stage);
 
-// Shift the picture left while the console covers the right side, so the
-// city stays centred in the space you can see.
-const viewShift = { cur: 0, target: 0 };
+// Shift the picture left while the console covers the right side (and up while a phone's sheet covers the
+// bottom), so the city stays centred in the space you can see.
+const viewShift = { cur: 0, target: 0, curY: 0, targetY: 0 };
 function applyViewOffset() {
-  if (Math.abs(viewShift.cur) < 0.5) camera.clearViewOffset();
-  else camera.setViewOffset(viewW, viewH, viewShift.cur, 0, viewW, viewH);
+  if (Math.abs(viewShift.cur) < 0.5 && Math.abs(viewShift.curY) < 0.5) camera.clearViewOffset();
+  else camera.setViewOffset(viewW, viewH, viewShift.cur, viewShift.curY, viewW, viewH);
 }
 
 // ---------------- sky, stars, time of day ----------------
