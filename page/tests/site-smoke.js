@@ -224,6 +224,12 @@ function serve() {
     await page.waitForTimeout(900);
     ok(await page.evaluate(() => document.getElementById('console').dataset.open === 'true'), 'The console button does nothing on a phone');
     await page.screenshot({ path: dist(`smoke-site-phone-${w}-console.png`) });
+    // and a tap on the × in the console's header hides it again (the toolbar icon alone was easy to miss on a phone)
+    const xBox = await page.evaluate(() => { const r = document.getElementById('btnConsoleClose').getBoundingClientRect(), t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { x: r.left + r.width / 2, y: r.top + r.height / 2, reachable: !!t && document.getElementById('btnConsoleClose').contains(t) }; });
+    ok(xBox.reachable, `The console's × button is covered or off screen on a phone at ${w}x${h}: ${JSON.stringify(xBox)}`);
+    await page.touchscreen.tap(xBox.x, xBox.y);
+    await page.waitForFunction(() => document.getElementById('console').dataset.open === 'false', null, { timeout: 15000 * SLOW }).catch(() => {});
+    ok(await page.evaluate(() => document.getElementById('console').dataset.open === 'false'), `Tapping the console's × button does not hide the console on a phone at ${w}x${h}`);
     await context.close();
   }
 

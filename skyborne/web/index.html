@@ -131,9 +131,13 @@ body{margin:0;background:#9fc3dd}[hidden]{display:none!important}
   .console{ position: fixed; z-index: 4; right: 16px; top: calc(76px + env(safe-area-inset-top, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); width: min(380px, calc(100vw - 32px)); display: flex; flex-direction: column; overflow: hidden; transition: transform .35s cubic-bezier(.2,.8,.2,1), opacity .25s; }
   .console[data-open="false"]{ transform: translateX(calc(100% + 24px)); opacity: 0; pointer-events: none; }
   .c-head{ padding: 14px 16px 0; }
-  .c-title{ display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .c-title{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .c-title h2{ margin: 0; font-size: 13px; font-weight: 600; color: var(--fg); }
   .c-title small{ font-size: 11px; color: var(--fg-faint); }
+  .c-right{ display: flex; align-items: center; gap: 6px; margin: -8px -8px -8px 0; }  /* the × sits in the corner without making the 16 px title row taller (the margins cancel the button's extra height) */
+  .c-close{ display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--fg-dim); cursor: pointer; }
+  .c-close:hover{ background: var(--raised); color: var(--fg); }
+  .c-close svg{ width: 15px; height: 15px; }
   .stats{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 14px; }
   .stat{ min-width: 0; }
   .stat b{ display: block; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
@@ -394,6 +398,8 @@ body{margin:0;background:#9fc3dd}[hidden]{display:none!important}
     .alert{ top: auto; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
     .alert:not([hidden]) ~ .foot{ display: none; } /* the alert takes the bottom edge */
     .tb .tip{ display: none; }
+    .c-right{ margin: -12px -12px -12px 0; }
+    .c-close{ width: 40px; height: 40px; }  /* a finger-sized target on the sheet; the row stays 16 px tall */
     /* the console as a bottom sheet: the inbox takes at most a third; a session's detail gets a taller sheet
        (still clear of the toolbar); the alert sits above an open sheet, and steps aside for a detail, whose
        console already shows the same cards */
@@ -440,7 +446,7 @@ body{margin:0;background:#9fc3dd}[hidden]{display:none!important}
 
 <aside class="console glass" id="console" data-open="true" aria-label="Console">
   <div class="c-head">
-    <div class="c-title"><h2>Console</h2><small id="cUpdated">Waiting for data</small></div>
+    <div class="c-title"><h2>Console</h2><div class="c-right"><small id="cUpdated">Waiting for data</small><button type="button" class="c-close" id="btnConsoleClose" aria-label="Hide console" title="Hide console (C)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div></div>
     <div class="stats">
       <div class="stat" id="sNeedBox"><b id="sNeed">0</b><span>Needs you</span></div>
       <div class="stat"><b id="sWork">0</b><span>Working</span></div>
@@ -742,12 +748,12 @@ function resize() {
 }
 new ResizeObserver(() => resize()).observe(stage);
 
-// Shift the picture left while the console covers the right side, so the
-// city stays centred in the space you can see.
-const viewShift = { cur: 0, target: 0 };
+// Shift the picture left while the console covers the right side (and up while a phone's sheet covers the
+// bottom), so the city stays centred in the space you can see.
+const viewShift = { cur: 0, target: 0, curY: 0, targetY: 0 };
 function applyViewOffset() {
-  if (Math.abs(viewShift.cur) < 0.5) camera.clearViewOffset();
-  else camera.setViewOffset(viewW, viewH, viewShift.cur, 0, viewW, viewH);
+  if (Math.abs(viewShift.cur) < 0.5 && Math.abs(viewShift.curY) < 0.5) camera.clearViewOffset();
+  else camera.setViewOffset(viewW, viewH, viewShift.cur, viewShift.curY, viewW, viewH);
 }
 
 // ---------------- sky, stars, time of day ----------------
@@ -3486,6 +3492,7 @@ function updateCamera(dt) {
   if (fly.on) {
     fly.t = (performance.now() - fly.start) / 1000 / fly.dur; const k = easeInOut(Math.min(1, fly.t));
     camera.position.lerpVectors(fly.fromP, fly.toP, k); controls.target.lerpVectors(fly.fromT, fly.toT, k);
+    camera.lookAt(controls.target);  // keep facing where it flies (controls.update() is skipped here), or it swings over the clouds until it lands
     if (fly.t >= 1) fly.on = false;
     return;
   }
@@ -4673,7 +4680,13 @@ async function toggleFull() {
 }
 function setSamples(on) { prefs.samples = on; if (on) startSamples(); else stopSamples(); setLive(city.status); uiDirty = true; }
 
+const phoneQuery = matchMedia('(max-width: 760px)');  // the sheet layout's own breakpoint (page.html)
 $('btnConsole').addEventListener('click', () => setConsole(!prefs.console));
+$('btnConsoleClose').addEventListener('click', () => {
+  const had = document.activeElement === $('btnConsoleClose');
+  setConsole(false);
+  if (had) $('btnConsole').focus({ preventScroll: true });  // keyboard or mouse: focus leaves the hidden sheet for the toolbar button, which brings it back (a tap that never focused the × leaves focus alone, so Safari shows no ring)
+});
 $('btnTime').addEventListener('click', cycleTime);
 $('btnSafe').addEventListener('click', () => setSafe(!prefs.safe));
 $('btnReel').addEventListener('click', () => setReel(!director.on));
@@ -4821,7 +4834,13 @@ function step(now) {
     camera.lookAt(controls.target);
   } else updateCamera(dt);
   viewShift.target = prefs.console && !director.on && viewW > 760 ? Math.min(200, ($('console').offsetWidth + 32) / 2) : 0;
-  if (Math.abs(viewShift.target - viewShift.cur) > 0.3) { viewShift.cur = damp(viewShift.cur, viewShift.target, 5, dt); applyViewOffset(); }
+  // on a phone the console is a sheet over the bottom: the picture moves up to the middle of the band between the toolbar and the sheet
+  // (the CSS breakpoint decides, not the stage width, which is still the 9:16 reel's for a frame after leaving reel mode; the sheet's own top is read, which includes the phone's bottom inset)
+  viewShift.targetY = prefs.console && !director.on && phoneQuery.matches
+    ? Math.max(0, Math.min(viewH * 0.4, viewH / 2 - (document.querySelector('.hud').getBoundingClientRect().bottom + $('console').offsetTop) / 2)) : 0;
+  if (Math.abs(viewShift.target - viewShift.cur) > 0.3 || Math.abs(viewShift.targetY - viewShift.curY) > 0.3) {
+    viewShift.cur = damp(viewShift.cur, viewShift.target, 5, dt); viewShift.curY = damp(viewShift.curY, viewShift.targetY, 5, dt); applyViewOffset();
+  }
   updateHover(dt);
   uiT += dt;
   if (uiDirty || uiT > 1) { uiT = 0; uiDirty = false; lastStats = renderUI(); }
@@ -5044,7 +5063,7 @@ resize();
 setInterval(() => { if (city.allDocs.size || prefs.samples) showDocs(); }, 5000);  // sessions age from live to past
 setInterval(() => { if (askUI.size && prefs.console) tickAsks(); }, 1000);
 ensureLoop(1); buildSkyTraffic();
-window.__skyborne = { composer, mayorName, customLeadName, city, director, transit, selectDistrict, selectBot, overview, renderer, scene, camera, renderTokTip, playRecording, backToLive, audioState: () => actx && actx.state,
+window.__skyborne = { composer, mayorName, customLeadName, city, director, transit, selectDistrict, selectBot, overview, renderer, scene, camera, controls, renderTokTip, playRecording, backToLive, audioState: () => actx && actx.state,
   // for the smoke tests: the pure helpers, and the console's own drawing
   isLive, isBusy, visibleDocs, layoutTimeline, fmtDur, detail, openDetail, closeDetail, showDocs, renderUI, drawLog, drawSteps, logRows: () => logRows };
 requestAnimationFrame(frame);

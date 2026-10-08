@@ -573,7 +573,13 @@ async function toggleFull() {
 }
 function setSamples(on) { prefs.samples = on; if (on) startSamples(); else stopSamples(); setLive(city.status); uiDirty = true; }
 
+const phoneQuery = matchMedia('(max-width: 760px)');  // the sheet layout's own breakpoint (page.html)
 $('btnConsole').addEventListener('click', () => setConsole(!prefs.console));
+$('btnConsoleClose').addEventListener('click', () => {
+  const had = document.activeElement === $('btnConsoleClose');
+  setConsole(false);
+  if (had) $('btnConsole').focus({ preventScroll: true });  // keyboard or mouse: focus leaves the hidden sheet for the toolbar button, which brings it back (a tap that never focused the × leaves focus alone, so Safari shows no ring)
+});
 $('btnTime').addEventListener('click', cycleTime);
 $('btnSafe').addEventListener('click', () => setSafe(!prefs.safe));
 $('btnReel').addEventListener('click', () => setReel(!director.on));
@@ -721,7 +727,13 @@ function step(now) {
     camera.lookAt(controls.target);
   } else updateCamera(dt);
   viewShift.target = prefs.console && !director.on && viewW > 760 ? Math.min(200, ($('console').offsetWidth + 32) / 2) : 0;
-  if (Math.abs(viewShift.target - viewShift.cur) > 0.3) { viewShift.cur = damp(viewShift.cur, viewShift.target, 5, dt); applyViewOffset(); }
+  // on a phone the console is a sheet over the bottom: the picture moves up to the middle of the band between the toolbar and the sheet
+  // (the CSS breakpoint decides, not the stage width, which is still the 9:16 reel's for a frame after leaving reel mode; the sheet's own top is read, which includes the phone's bottom inset)
+  viewShift.targetY = prefs.console && !director.on && phoneQuery.matches
+    ? Math.max(0, Math.min(viewH * 0.4, viewH / 2 - (document.querySelector('.hud').getBoundingClientRect().bottom + $('console').offsetTop) / 2)) : 0;
+  if (Math.abs(viewShift.target - viewShift.cur) > 0.3 || Math.abs(viewShift.targetY - viewShift.curY) > 0.3) {
+    viewShift.cur = damp(viewShift.cur, viewShift.target, 5, dt); viewShift.curY = damp(viewShift.curY, viewShift.targetY, 5, dt); applyViewOffset();
+  }
   updateHover(dt);
   uiT += dt;
   if (uiDirty || uiT > 1) { uiT = 0; uiDirty = false; lastStats = renderUI(); }
@@ -944,7 +956,7 @@ resize();
 setInterval(() => { if (city.allDocs.size || prefs.samples) showDocs(); }, 5000);  // sessions age from live to past
 setInterval(() => { if (askUI.size && prefs.console) tickAsks(); }, 1000);
 ensureLoop(1); buildSkyTraffic();
-window.__skyborne = { composer, mayorName, customLeadName, city, director, transit, selectDistrict, selectBot, overview, renderer, scene, camera, renderTokTip, playRecording, backToLive, audioState: () => actx && actx.state,
+window.__skyborne = { composer, mayorName, customLeadName, city, director, transit, selectDistrict, selectBot, overview, renderer, scene, camera, controls, renderTokTip, playRecording, backToLive, audioState: () => actx && actx.state,
   // for the smoke tests: the pure helpers, and the console's own drawing
   isLive, isBusy, visibleDocs, layoutTimeline, fmtDur, detail, openDetail, closeDetail, showDocs, renderUI, drawLog, drawSteps, logRows: () => logRows };
 requestAnimationFrame(frame);

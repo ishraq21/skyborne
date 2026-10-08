@@ -233,6 +233,7 @@ function updateCamera(dt) {
   if (fly.on) {
     fly.t = (performance.now() - fly.start) / 1000 / fly.dur; const k = easeInOut(Math.min(1, fly.t));
     camera.position.lerpVectors(fly.fromP, fly.toP, k); controls.target.lerpVectors(fly.fromT, fly.toT, k);
+    camera.lookAt(controls.target);  // keep facing where it flies (controls.update() is skipped here), or it swings over the clouds until it lands
     if (fly.t >= 1) fly.on = false;
     return;
   }

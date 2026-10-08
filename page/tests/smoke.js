@@ -631,6 +631,76 @@ const dist = (f) => path.resolve(__dirname, '../dist', f);
     && [1440, 1280, 1000, 800, 390].every((w) => follow[w].label) && !follow[320].label;  // a small phone: the logo alone
   if (!fine) errors.push('The Follow on X and GitHub buttons: ' + JSON.stringify(follow));
 
+  // the × in the console's header hides the console at every size (on a phone the toolbar icon is easy to miss):
+  // it is on top and big enough to tap, it has a name, it hides the console, and focus goes to the toolbar button, which
+  // brings the console back
+  for (const [w, h, min] of [[1280, 800, 28], [390, 844, 36]]) {
+    await page.setViewportSize({ width: w, height: h }); await page.waitForTimeout(400);
+    await page.evaluate(() => { if (document.getElementById('console').dataset.open !== 'true') document.getElementById('btnConsole').click(); });
+    await page.waitForFunction(() => document.getElementById('console').dataset.open === 'true', null, { timeout: 15000 });
+    await page.waitForTimeout(600);  // the slide-in
+    const x = await page.evaluate((min) => {
+      const b = document.getElementById('btnConsoleClose'), r = b.getBoundingClientRect(), top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return { box: [r.left + r.width / 2, r.top + r.height / 2], named: b.getAttribute('aria-label') === 'Hide console', big: r.width >= min && r.height >= min,
+        reachable: !!top && b.contains(top), onScreen: r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight };
+    }, min);
+    await page.mouse.click(x.box[0], x.box[1]);
+    await page.waitForFunction(() => document.getElementById('console').dataset.open === 'false', null, { timeout: 15000 }).catch(() => {});
+    const after = await page.evaluate(() => ({ open: document.getElementById('console').dataset.open, pressed: document.getElementById('btnConsole').getAttribute('aria-pressed'), focus: document.activeElement?.id }));
+    await page.evaluate(() => document.getElementById('btnConsole').click());
+    await page.waitForFunction(() => document.getElementById('console').dataset.open === 'true', null, { timeout: 15000 }).catch(() => {});
+    const back = await page.evaluate(() => document.getElementById('console').dataset.open);
+    if (!x.named || !x.big || !x.reachable || !x.onScreen || after.open !== 'false' || after.pressed !== 'false' || after.focus !== 'btnConsole' || back !== 'true') errors.push(`The console's × button at ${w}x${h}: ${JSON.stringify({ x, after, back })}`);
+  }
+  await page.setViewportSize({ width: 1280, height: 800 }); await page.waitForTimeout(400);
+
+  // the camera faces where it is flying: on a click on a bot or a district, and on "overview", the camera must keep
+  // looking at the point it is flying toward, frame after frame, and not hold its old aim and swing over the clouds
+  // until it lands. Sampled inside the page after each frame is drawn (so a slow software-drawn page can't skew it).
+  const aim = await page.evaluate((windowMs) => new Promise((resolve) => {
+    const o = window.__skyborne, cam = o.camera, ctl = o.controls, dir = cam.position.clone(), want = cam.position.clone(), head = cam.position.clone();
+    const d0 = [...o.city.districts.values()].find((d) => d.robots.size), bot = d0 && [...d0.robots.values()][0];
+    if (!bot) { resolve({ error: 'no bot to select' }); return; }
+    const cases = [['setup', () => o.overview()], ['bot', () => o.selectBot(bot)], ['district', () => o.selectDistrict(d0)], ['overview', () => o.overview()]];
+    const out = {}; let i = 0;
+    const next = () => {
+      if (i >= cases.length) { o.selectDistrict(null); o.closeDetail(); resolve(out); return; }
+      const [name, start] = cases[i++], from = cam.position.clone(), t0 = performance.now(); let worst = 0, frames = 0;
+      start();
+      const tick = () => requestAnimationFrame(() => setTimeout(() => {
+        cam.getWorldDirection(dir); want.copy(ctl.target).sub(cam.position);
+        if (want.lengthSq() > 1e-6) worst = Math.max(worst, dir.angleTo(want) * 180 / Math.PI);
+        frames++;
+        if (performance.now() - t0 < windowMs) { tick(); return; }
+        bot.head.getWorldPosition(head); head.project(cam);
+        out[name] = { worst: Math.round(worst * 100) / 100, frames, moved: Math.round(cam.position.distanceTo(from)), endY: Math.round(cam.position.y * 10) / 10,
+          headOnScreen: Math.abs(head.x) <= 1 && Math.abs(head.y) <= 1 && head.z < 1 };
+        next();
+      }, 0));
+      tick();
+    };
+    next();
+  }), 2200 * SLOW);
+  const aimBad = aim.error || Object.entries(aim).some(([k, v]) => v.worst >= 1 || v.frames < 2 || (k !== 'setup' && k !== 'overview' && v.moved < 5)) || aim.bot.endY <= 0 || !aim.bot.headOnScreen;
+  if (aimBad) errors.push('The camera does not keep facing where it flies (worst angle in degrees, must be under 1): ' + JSON.stringify(aim));
+
+  // on a phone the console is a sheet over the bottom: a click on a bot must leave the bot's head in the band
+  // between the toolbar and the sheet (not hidden behind the sheet, with only sky and clouds above it)
+  await page.setViewportSize({ width: 390, height: 844 }); await page.waitForTimeout(400);
+  const phoneBot = await page.evaluate((settleMs) => new Promise((resolve) => {
+    const o = window.__skyborne, d0 = [...o.city.districts.values()].find((d) => d.robots.size), bot = d0 && [...d0.robots.values()][0], head = o.camera.position.clone();
+    if (!bot) { resolve({ error: 'no bot to select' }); return; }
+    o.selectBot(bot);
+    setTimeout(() => {
+      bot.head.getWorldPosition(head); head.project(o.camera);
+      const y = (1 - head.y) / 2 * innerHeight, band = [document.querySelector('.hud').getBoundingClientRect().bottom, document.getElementById('console').getBoundingClientRect().top];
+      o.selectDistrict(null); o.closeDetail(); o.overview();  // back to the skyline, so the tests after this one start from the overview
+      setTimeout(() => resolve({ y: Math.round(y), band: band.map(Math.round), inBand: y >= band[0] && y <= band[1], x: Math.round((head.x + 1) / 2 * innerWidth) }), 1800 * settleMs / 4000);
+    }, settleMs);
+  }), 4000 * SLOW);
+  if (phoneBot.error || !phoneBot.inBand) errors.push("On a phone a click on a bot leaves its head behind the console sheet or the toolbar (y, band): " + JSON.stringify(phoneBot));
+  await page.setViewportSize({ width: 1280, height: 800 }); await page.waitForTimeout(400);
+
   // the name on the 3D signs: no text pixels at the edges of the flag and blimp textures, and the
   // ring's longest line fits its texture even in the display font
   await page.evaluate(() => document.fonts.load('800 112px Unbounded'));

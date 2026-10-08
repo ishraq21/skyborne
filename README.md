@@ -89,7 +89,7 @@ city at a glance.
 
 ### The console
 
-The panel beside the city (`C` shows or hides it) is where you read the details and act.
+The panel beside the city (`C` or the first icon in the top-right toolbar shows or hides it; the × in its header hides it) is where you read the details and act.
 
 - **At a glance**: how many requests need you, how many Skybots are working, **Usage** (how much of
   your 5-hour limit you've used on a Pro or Max plan; on other plans, what today's sessions would
