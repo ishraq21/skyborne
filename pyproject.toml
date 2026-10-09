@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skyborne"
-version = "0.1.1"
+version = "0.2.0"
 description = "A live 3D sky city of your Claude Code agents: watch sessions, approve or deny requests. Local-only, no telemetry."
 readme = "README.md"
 authors = [{ name = "Mirza Ishraq Yeahia" }]
