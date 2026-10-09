@@ -8,6 +8,8 @@ notes are the version's section here.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-09
+
 **City scale**
 - Districts are about 1.4 times wider, with a wider two-lane road and more room between the desks. The whole city spreads out to match, and the camera's views pull back with it.
 - Cars, shops, the café, apartments, towers and each district's HQ are now sized like a real city next to the Skybots:
@@ -17,7 +19,7 @@ notes are the version's section here.
 - City Hall is bigger, and the hover cars fly higher, above the tallest towers.
 - Cars on the same lane keep their distance instead of driving through each other.
 - Sun shadows now follow the camera, so they also show on districts far from City Hall.
-- A full city of 60 districts takes about a fifth fewer draw calls, so frames are smoother on most machines.
+- A full city of 60 districts takes about a tenth fewer draw calls (the batches of drawing the page sends to the graphics card each frame).
 
 **Skybots walk around things**
 - Skybots no longer walk through desks, the kiosk, the bench, trees or the HQ. They follow a path around them.
@@ -27,6 +29,7 @@ notes are the version's section here.
   - helpers handing their results to the lead stand around it, not on top of each other;
   - helpers that beam in (when every house is taken, see below) arrive side by side around the pad, and wait in their own spots by the pad when they finish.
 - Opening the city on a quiet (asleep) session puts its Skybots in their places. Before, they all stood on one spot in the middle of the plaza.
+- A desk's screen no longer flickers or goes dark under a Skybot working at it after another bot has left that desk.
 
 **Homes for helpers**
 - Each district has a row of six cottages at its front, across the road from the plaza, with their doors facing the island's edge.
@@ -41,7 +44,10 @@ notes are the version's section here.
 
 **Camera**
 - Clicking a Skybot or a district, or "Back to the skyline", no longer swings the camera over the clouds on the way. It now keeps facing where it is flying.
-- On a phone held upright, with the console open, the picture sits in the strip above the console sheet, so a Skybot you click is no longer hidden behind the sheet. This applies to every view while the console is open, not only a click on a Skybot. A phone held sideways is not fixed yet.
+- On a phone held upright, with the console open, the picture sits in the strip above the console sheet, so a Skybot you click is no longer hidden behind the sheet. This applies to every view while the console is open, not only a click on a Skybot.
+
+**Known gap: a phone held sideways**
+- With the console open on a phone held sideways, the console can still cover a Skybot you click ([#22](https://github.com/ishraq21/skyborne/issues/22)).
 
 ## [0.1.1] - 2026-10-07
 
