@@ -844,6 +844,89 @@ const dist = (f) => path.resolve(__dirname, '../dist', f);
     districts: [...window.__skyborne.city.districts.values()].map((d) => `${d.id}${d.leaving ? ' leaving' : ''}${d.rise < 1 ? ' rising' : ''}`) }));
   if (liveAgain.status !== 'live' || liveAgain.n < 4) errors.push('Back to live failed: ' + JSON.stringify(liveAgain));
 
+  // Skybots walk around things. The walk map first, in every district (their trees differ): every place a bot can be
+  // sent (desks, spots) is open; there's a path from each to every other that never crosses furniture (checked every
+  // 0.1); and each can still be reached with a bot standing at every other place
+  const walkMap = await page.evaluate(() => {
+    const o = window.__skyborne, out = { districts: 0, shut: [], noWay: [], through: [], cutOff: [] };
+    for (const d of [...o.city.districts.values()].filter((x) => !x.leaving)) {
+      out.districts++;
+      const places = o.DESKS.map(([x, z], i) => ({ name: 'desk ' + i, x, z: z - 0.92 }));
+      for (const [kind, list] of Object.entries(o.SPOT_PLACES)) list.forEach((p, i) => places.push({ name: `${kind} ${i}`, x: p.x, z: p.z }));
+      for (const p of places) if (!o.walkable(d, p.x, p.z)) out.shut.push(`${d.id}: ${p.name}`);
+      for (const a of places) for (const b of places) {
+        if (a === b) continue;
+        const path = o.walkPath(d, a, b);
+        if (!path) { out.noWay.push(`${d.id}: ${a.name} to ${b.name}`); continue; }
+        let px = a.x, pz = a.z, crossed = false;
+        for (const w of path) {
+          const n = Math.ceil(Math.hypot(w.x - px, w.z - pz) / 0.1);
+          for (let k = 1; k <= n && !crossed; k++) crossed = !o.walkable(d, px + (w.x - px) * k / n, pz + (w.z - pz) * k / n);
+          px = w.x; pz = w.z;
+        }
+        if (crossed) out.through.push(`${d.id}: ${a.name} to ${b.name}`);
+        if (!o.walkPath(d, a, b, places.filter((q) => q !== a && q !== b))) out.cutOff.push(`${d.id}: ${a.name} to ${b.name}`);
+      }
+    }
+    for (const k of ['shut', 'noWay', 'through', 'cutOff']) out[k] = out[k].slice(0, 5);
+    return out;
+  });
+  if (!walkMap.districts || walkMap.shut.length || walkMap.noWay.length || walkMap.through.length || walkMap.cutOff.length) errors.push('Walk map: ' + JSON.stringify(walkMap));
+  // Then a busy district, run without drawing (simulate) and fed by the test (useSource). A lead and seven helpers
+  // arrive at once; three finish (they hand their results to the lead, then wait by the pad); four more arrive while
+  // those three wait; the three leave; everyone idles (more bots than idle spots) and wanders, then goes back to work.
+  // Every new helper beams in (it walks from the pad, not snapped into place). All along, no bot comes within
+  // BOT_R - 0.2 of furniture (except in a doorway), and no two bots are closer than 0.6 for more than 0.5 s. At the end
+  // every bot stands where it was sent: at a desk, or (no desk left) at a spare spot.
+  await page.evaluate(() => window.__skyborne.useSource({ start(h) { window.__walkFeed = h; }, stop() {} }));
+  await page.waitForFunction(() => window.__walkFeed && window.__skyborne.city.districts.size === 0, null, { timeout: 30000 }).catch(() => {});
+  const walkRun = await page.evaluate(() => {
+    const o = window.__skyborne, now = Date.now();
+    const lead = () => ({ id: 'main', name: 'Skybot', type: 'lead', status: 'working', kind: 'edit', activity: 'Editing a.ts', activitySince: Date.now(), parent: null });
+    const helper = (id, status = 'working') => ({ id, name: 'Scout ' + id, type: 'Explore', status, kind: status === 'working' ? 'search' : status, activity: 'Searching', activitySince: Date.now(), parent: 'main' });
+    const H = (ids) => ids.map((i) => helper('h' + i));
+    let agents = [lead()];
+    const feed = () => window.__walkFeed.docs(new Map([['walk', { v: 2, title: 'walk-test', headline: 'Walking', startedAt: now - 60_000, updatedAt: Date.now(), turns: 2, tokens: { total: 1000 }, agents, feed: [] }]]));
+    feed();
+    const d = o.city.districts.get('walk');
+    if (!d) return { error: 'no district' };
+    d.riseStart = performance.now() - 10_000; o.simulate(0.1); // risen: helpers now beam in and walk (a rising district snaps its bots into place)
+    const shapes = [...o.walkShapes(), ...d.walkTrees], r = { closest: Infinity, closestAt: '', together: {}, beamed: [] };
+    const check = () => {
+      const bots = [...d.robots.values()].filter((b) => b.solid());
+      for (const b of bots) {
+        if (o.walkCell(d, b.pos.x, b.pos.z) === 2) continue;
+        const c = Math.min(...shapes.map((s) => o.shapeDist(s, b.pos.x, b.pos.z)));
+        if (c < r.closest) { r.closest = c; r.closestAt = `${b.id} at (${b.pos.x.toFixed(2)}, ${b.pos.z.toFixed(2)})`; }
+      }
+      for (let i = 0; i < bots.length; i++) for (let j = i + 1; j < bots.length; j++)
+        if (Math.hypot(bots[i].pos.x - bots[j].pos.x, bots[i].pos.z - bots[j].pos.z) < 0.6) { const k = bots[i].id + '/' + bots[j].id; r.together[k] = (r.together[k] || 0) + 0.05; }
+    };
+    const arrived = (ids) => { for (const id of ids) r.beamed.push(d.robots.get(id)?.mode === 'beamIn'); };
+    const there = (b) => !b.walking && b.goal && Math.hypot(b.goal.x - b.pos.x, b.goal.z - b.pos.z) <= 0.06;
+    agents = [lead(), ...H([1, 2, 3, 4, 5, 6, 7])]; feed(); arrived(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'h7']); o.simulate(30, 0.05, check);
+    agents = agents.map((a) => ['h1', 'h2', 'h3'].includes(a.id) ? helper(a.id, 'done') : a); feed(); o.simulate(25, 0.05, check);
+    r.byPad = ['h1', 'h2', 'h3'].filter((id) => { const b = d.robots.get(id); return b?.spotKind === 'pad' && there(b); }).length;
+    agents = [...agents, ...H([8, 9, 10, 11])]; feed(); arrived(['h8', 'h9', 'h10', 'h11']); o.simulate(25, 0.05, check);
+    agents = agents.filter((a) => !['h1', 'h2', 'h3'].includes(a.id)); feed(); o.simulate(20, 0.05, check);
+    r.gone = ['h1', 'h2', 'h3'].filter((id) => !d.robots.has(id)).length;
+    const working = agents;
+    agents = agents.map((a) => ({ ...a, status: 'idle', kind: 'idle' })); feed(); o.simulate(60, 0.05, check);
+    agents = working.map((a) => ({ ...a, activitySince: Date.now() })); feed(); o.simulate(40, 0.05, check);
+    const live = [...d.robots.values()].filter((b) => !b.leaving);
+    r.stray = live.filter((b) => !((b.atDesk || b.spotKind === 'spare') && there(b))).map((b) => `${b.id} at (${b.pos.x.toFixed(2)}, ${b.pos.z.toFixed(2)})`);
+    r.atDesks = live.filter((b) => b.atDesk).length;
+    r.beamed = `${r.beamed.filter(Boolean).length}/${r.beamed.length}`;
+    r.closest = +r.closest.toFixed(2);
+    r.longest = +Math.max(0, ...Object.values(r.together)).toFixed(2); r.together = Object.fromEntries(Object.entries(r.together).filter(([, t]) => t > 0.5));
+    return r;
+  });
+  if (walkRun.error || !(walkRun.closest >= 0.25) || walkRun.longest > 0.5 || walkRun.stray.length || walkRun.beamed !== '11/11' || walkRun.byPad !== 3
+    || walkRun.gone !== 3 || walkRun.atDesks !== 7) errors.push('Skybots walking: ' + JSON.stringify(walkRun));
+  await page.evaluate(() => window.__skyborne.backToLive());
+  await page.waitForFunction(() => { const c = window.__skyborne.city; return c.status === 'live' && [...c.districts.values()].filter((d) => !d.leaving).length >= 4; },
+    null, { timeout: 30000 }).catch(() => {});
+
   // a full city: 60 districts (the most the city shows). Draw calls are reported; headless software
   // rendering says nothing about frame rate on a real GPU, so that's measured separately.
   const many = { format: 'skyborne-recording', version: 1, session: { id: 'c-0', title: 'city' }, duration: 600_000, // no loop during the check
@@ -896,6 +979,6 @@ const dist = (f) => path.resolve(__dirname, '../dist', f);
   server.close();
   const ok = !errors.length && info.districts > 0 && info.status === 'live';
   console.log(ok ? 'OK' : 'FAIL', JSON.stringify({ ...info, ring: Math.round(signs.ring), blimp: Math.round(signs.blimpWidth), displayFont: signs.font,
-    fonts: fontResponses.length, city60, questionsMs: questions, perf }), errors.length ? errors : '');
+    fonts: fontResponses.length, city60, walk: { closest: walkRun.closest, longestTogether: walkRun.longest }, questionsMs: questions, perf }), errors.length ? errors : '');
   process.exit(ok ? 0 : 1);
 })();

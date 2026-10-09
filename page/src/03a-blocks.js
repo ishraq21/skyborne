@@ -23,7 +23,8 @@ const LOTS = [
 // development points a district needs before each lot gets built (see District.develop)
 const LOT_STEPS = [0, 5, 12, 22, 34, 50, 70, 95];
 const ASPHALT = 0x3b4152, CURB = 0xddd6c6;
-const IDLE_SPOTS = [[6.6, -1.25], [5.1, 0.0], [-5.4, 5.6], [4.6, 6.25], [-7.1, 1.75], [0.75, 7.6], [-3.0, -2.0]];
+// where idle bots hang about on the plaza (District.claimSpot gives each to one bot at a time)
+const IDLE_SPOTS = [[6.6, -1.25], [2.9, -1.8], [-5.4, 5.6], [4.6, 6.25], [-7.1, 1.75], [0.75, 7.6], [-3.0, -2.0]];
 
 function makeRoadRing() {
   const g = new THREE.Group();

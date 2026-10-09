@@ -1918,7 +1918,8 @@ const LOTS = [
 // development points a district needs before each lot gets built (see District.develop)
 const LOT_STEPS = [0, 5, 12, 22, 34, 50, 70, 95];
 const ASPHALT = 0x3b4152, CURB = 0xddd6c6;
-const IDLE_SPOTS = [[6.6, -1.25], [5.1, 0.0], [-5.4, 5.6], [4.6, 6.25], [-7.1, 1.75], [0.75, 7.6], [-3.0, -2.0]];
+// where idle bots hang about on the plaza (District.claimSpot gives each to one bot at a time)
+const IDLE_SPOTS = [[6.6, -1.25], [2.9, -1.8], [-5.4, 5.6], [4.6, 6.25], [-7.1, 1.75], [0.75, 7.6], [-3.0, -2.0]];
 
 function makeRoadRing() {
   const g = new THREE.Group();
@@ -2209,7 +2210,8 @@ const DESKS = [[0, 3.9], [-3.3, 3.45], [3.3, 3.45], [-1.65, 0.55], [1.65, 0.55],
 const TOWER_Z = -4.6, HQ_W = 6.0, HQ_D = 3.9, HQ_FLOOR_H = 1.6;
 const DOOR = new THREE.Vector3(0, 0, TOWER_Z + HQ_D / 2 + 0.1);
 const PAD = new THREE.Vector3(-6.25, 0, -2.9);
-const KIOSK = new THREE.Vector3(6.25, 0, -3.0);
+const KIOSK = new THREE.Vector3(6.25, 0, -3.0), KIOSK_ROT = -0.5;
+const BENCH = { x: 5.6, z: -1.0, rot: -1.2 };
 const PLAZA_Z = 1.4, PLAZA_R = 7.2, PLAZA_TOP = 0.12, PAD_R = 0.95, PAD_TOP = 0.18;
 const ISLAND_R = 16;
 const RING1_R = 46, RING_STEP = 40;
@@ -2245,6 +2247,194 @@ function slotPosition(slot) {
   const R = RING1_R + (ring - 1) * RING_STEP;
   return { x: Math.sin(a) * R, z: Math.cos(a) * R, a, ring };
 }
+
+// =====================================================================
+// the walk map: where a Skybot can stand, and its paths around desks, buildings, trees and other bots
+// =====================================================================
+// A grid of WALK_CELL squares over the island, in district space. Every obstacle grows by a bot's radius (BOT_R), so a
+// bot's middle may stand in any open cell (0). The furniture every district shares is drawn once (walkBase); each
+// district copies it and adds its own trees. A door lane (2) is open: it reaches into a doorway, so a bot can walk up
+// to the door. Bots keep inside the ring road.
+const WALK_CELL = 0.25, WALK_N = 128, WALK_HALF = WALK_N * WALK_CELL / 2, BOT_R = 0.45, BOT_GAP = 0.85;
+const cellOf = (v) => Math.floor((v + WALK_HALF) / WALK_CELL);
+const cellMid = (i) => -WALK_HALF + (i + 0.5) * WALK_CELL;
+// what's in the way, as it stands: circles { x, z, r } and boxes { x, z, hw, hd, rot } (half sizes; turned like rotation.y)
+function walkShapes() {
+  const s = DESKS.map(([x, z]) => ({ x, z, hw: 0.725, hd: 0.31, rot: 0 }));
+  s.push({ x: 0, z: TOWER_Z, hw: HQ_W / 2, hd: HQ_D / 2, rot: 0 }, { x: KIOSK.x, z: KIOSK.z, hw: 0.65, hd: 0.4, rot: KIOSK_ROT },
+    { x: BENCH.x, z: BENCH.z, hw: 0.75, hd: 0.24, rot: BENCH.rot },
+    // behind the kiosk, out to the road: too tight for two bots to pass, so nobody walks round there
+    { x: KIOSK.x + 1.0, z: KIOSK.z - 0.6, r: 0.9 });
+  return s;
+}
+// how far (x, z) is from a shape's edge (below 0: inside it)
+function shapeDist(s, x, z) {
+  const dx = x - s.x, dz = z - s.z;
+  if (s.r !== undefined) return Math.hypot(dx, dz) - s.r;
+  const c = Math.cos(s.rot), n = Math.sin(s.rot), lx = c * dx - n * dz, lz = n * dx + c * dz; // into the box's own frame
+  const ox = Math.abs(lx) - s.hw, oz = Math.abs(lz) - s.hd;
+  return ox > 0 || oz > 0 ? Math.hypot(Math.max(ox, 0), Math.max(oz, 0)) : Math.max(ox, oz);
+}
+function blockShape(m, s) {
+  const reach = (s.r ?? Math.hypot(s.hw, s.hd)) + BOT_R;
+  const i0 = Math.max(0, cellOf(s.x - reach)), i1 = Math.min(WALK_N - 1, cellOf(s.x + reach));
+  const j0 = Math.max(0, cellOf(s.z - reach)), j1 = Math.min(WALK_N - 1, cellOf(s.z + reach));
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (shapeDist(s, cellMid(i), cellMid(j)) < BOT_R) m[j * WALK_N + i] = 1;
+}
+const WALK_EDGE = ROAD_IN - 0.2 - BOT_R; // a bot's middle stays this close to the centre: inside the road, with its kerb
+let walkBase = null;
+function makeWalkMap(trees) {
+  if (!walkBase) {
+    walkBase = new Uint8Array(WALK_N * WALK_N);
+    for (let j = 0; j < WALK_N; j++) for (let i = 0; i < WALK_N; i++) if (Math.hypot(cellMid(i), cellMid(j)) > WALK_EDGE) walkBase[j * WALK_N + i] = 1;
+    for (const sh of walkShapes()) blockShape(walkBase, sh);
+    // the HQ door's lane: from the plaza into the doorway
+    for (let j = cellOf(DOOR.z - 0.2); j <= cellOf(DOOR.z + BOT_R + 0.1); j++) for (let i = cellOf(-0.4); i <= cellOf(0.4); i++) walkBase[j * WALK_N + i] = 2;
+  }
+  const m = walkBase.slice();
+  for (const t of trees) blockShape(m, t);
+  // shut the little pockets no bot can walk into (between the kiosk and the bench, say): only cells reachable from the
+  // middle of the plaza stay open, so a bot nudged aside can't land in one
+  const seen = new Uint8Array(WALK_N * WALK_N), todo = [cellOf(PLAZA_Z) * WALK_N + cellOf(0)];
+  seen[todo[0]] = 1;
+  while (todo.length) {
+    const c = todo.pop(), i = c % WALK_N, j = (c / WALK_N) | 0;
+    for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const a = i + di, b = j + dj, n = b * WALK_N + a;
+      if (a >= 0 && b >= 0 && a < WALK_N && b < WALK_N && !seen[n] && m[n] !== 1) { seen[n] = 1; todo.push(n); }
+    }
+  }
+  for (let c = 0; c < m.length; c++) if (!seen[c]) m[c] = 1;
+  return m;
+}
+function walkCell(d, x, z) {
+  const i = cellOf(x), j = cellOf(z);
+  return i < 0 || j < 0 || i >= WALK_N || j >= WALK_N ? 1 : d.walk[j * WALK_N + i];
+}
+function walkable(d, x, z) { return walkCell(d, x, z) !== 1; }
+// the open cell nearest cell (i, j), as an index (-1: none within a few metres)
+function nearestOpen(m, i, j) {
+  const ok = (a, b) => a >= 0 && b >= 0 && a < WALK_N && b < WALK_N && m[b * WALK_N + a] !== 1;
+  if (ok(i, j)) return j * WALK_N + i;
+  for (let r = 1; r <= 12; r++) {
+    let best = -1, bd = Infinity;
+    for (let b = j - r; b <= j + r; b++) for (let a = i - r; a <= i + r; a++) {
+      if (Math.max(Math.abs(a - i), Math.abs(b - j)) !== r || !ok(a, b)) continue;
+      const dd = (a - i) ** 2 + (b - j) ** 2; if (dd < bd) { bd = dd; best = b * WALK_N + a; }
+    }
+    if (best >= 0) return best;
+  }
+  return -1;
+}
+// a copy of walk map m with the places in `at` shut within r of them (other bots, and where they're headed)
+function withBots(m, at, r) {
+  const out = m.slice(), N = WALK_N;
+  for (const p of at) {
+    const i0 = Math.max(0, cellOf(p.x - r)), i1 = Math.min(N - 1, cellOf(p.x + r)), j0 = Math.max(0, cellOf(p.z - r)), j1 = Math.min(N - 1, cellOf(p.z + r));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (out[j * N + i] !== 1 && Math.hypot(cellMid(i) - p.x, cellMid(j) - p.z) < r) out[j * N + i] = 1;
+  }
+  return out;
+}
+// is the straight line from (ax, az) to (bx, bz) open all the way? Every cell it passes through is checked (where it
+// passes exactly through a corner, both cells beside it too), past the one it starts in
+function walkLine(m, ax, az, bx, bz) {
+  const g = (v) => (v + WALK_HALF) / WALK_CELL, x0 = g(ax), z0 = g(az), x1 = g(bx), z1 = g(bz);
+  const dx = x1 - x0, dz = z1 - z0, si = Math.sign(dx), sj = Math.sign(dz);
+  const tdx = si ? 1 / Math.abs(dx) : Infinity, tdz = sj ? 1 / Math.abs(dz) : Infinity;
+  let i = Math.floor(x0), j = Math.floor(z0);
+  const iEnd = Math.floor(x1), jEnd = Math.floor(z1);
+  let tx = si > 0 ? (i + 1 - x0) * tdx : si < 0 ? (x0 - i) * tdx : Infinity, tz = sj > 0 ? (j + 1 - z0) * tdz : sj < 0 ? (z0 - j) * tdz : Infinity;
+  const blocked = (a, b) => a < 0 || b < 0 || a >= WALK_N || b >= WALK_N || m[b * WALK_N + a] === 1;
+  for (let k = Math.abs(iEnd - i) + Math.abs(jEnd - j) + 2; k > 0 && (i !== iEnd || j !== jEnd); k--) {
+    if (Math.abs(tx - tz) < 1e-9) { if (blocked(i + si, j) || blocked(i, j + sj)) return false; i += si; j += sj; tx += tdx; tz += tdz; }
+    else if (tx < tz) { i += si; tx += tdx; } else { j += sj; tz += tdz; }
+    if (blocked(i, j)) return false;
+  }
+  return true;
+}
+// A* over the grid's 8 neighbours (never cutting a blocked corner), with straight-line distance as the guess. Its
+// buffers are shared: a cell's cost counts only when it was reached in this search (seen === gen).
+const AS = { cost: new Float32Array(WALK_N * WALK_N), came: new Int32Array(WALK_N * WALK_N), seen: new Uint32Array(WALK_N * WALK_N), done: new Uint32Array(WALK_N * WALK_N), gen: 0 };
+const NB = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2]];
+// A path for a bot in district d from `from` to `to`: waypoints in order, the last one `to` (or the open place nearest
+// it). Null when there's no way through. avoid: where other bots stand (it keeps BOT_GAP from them; a start or goal
+// that close to one moves to the nearest open place).
+function walkPath(d, from, to, avoid = []) {
+  const N = WALK_N;
+  let m = d.walk;
+  if (avoid.length) m = withBots(m, avoid, BOT_GAP);
+  const s = nearestOpen(m, cellOf(from.x), cellOf(from.z)), g = nearestOpen(m, cellOf(to.x), cellOf(to.z));
+  if (s < 0 || g < 0) return null;
+  const end = m[cellOf(to.z) * N + cellOf(to.x)] !== 1 ? { x: to.x, z: to.z } : { x: cellMid(g % N), z: cellMid((g / N) | 0) };
+  if (s === g) return [end];
+  const gen = ++AS.gen, gi = g % N, gj = (g / N) | 0;
+  const hF = [], hN = []; // a binary heap of cells by cost so far plus the guess
+  const push = (f, n) => { let k = hF.length; hF.push(f); hN.push(n); while (k > 0) { const p = (k - 1) >> 1; if (hF[p] <= f) break; hF[k] = hF[p]; hN[k] = hN[p]; k = p; } hF[k] = f; hN[k] = n; };
+  const pop = () => {
+    const top = hN[0], lf = hF.pop(), ln = hN.pop();
+    if (hF.length) { let k = 0; for (;;) { let c = 2 * k + 1; if (c >= hF.length) break; if (c + 1 < hF.length && hF[c + 1] < hF[c]) c++; if (hF[c] >= lf) break; hF[k] = hF[c]; hN[k] = hN[c]; k = c; } hF[k] = lf; hN[k] = ln; }
+    return top;
+  };
+  AS.cost[s] = 0; AS.seen[s] = gen; AS.came[s] = -1; push(0, s);
+  let found = false;
+  for (let spent = 0; hF.length && spent < 9000; spent++) {
+    const c = pop();
+    if (AS.done[c] === gen) continue;
+    AS.done[c] = gen;
+    if (c === g) { found = true; break; }
+    const ci = c % N, cj = (c / N) | 0;
+    for (const [di, dj, w] of NB) {
+      const ni = ci + di, nj = cj + dj;
+      if (ni < 0 || nj < 0 || ni >= N || nj >= N) continue;
+      const n = nj * N + ni;
+      if (m[n] === 1 || AS.done[n] === gen) continue;
+      if (di && dj && (m[cj * N + ni] === 1 || m[nj * N + ci] === 1)) continue;
+      const cost = AS.cost[c] + w;
+      if (AS.seen[n] === gen && cost >= AS.cost[n]) continue;
+      AS.seen[n] = gen; AS.cost[n] = cost; AS.came[n] = c;
+      push(cost + Math.hypot(ni - gi, nj - gj), n);
+    }
+  }
+  if (!found) return null;
+  const cells = [];
+  for (let c = g; c !== -1; c = AS.came[c]) cells.push(c);
+  cells.reverse();
+  // pull the path straight: from each corner, on to the farthest cell still in plain sight
+  const out = [];
+  const fromOpen = m[cellOf(from.z) * N + cellOf(from.x)] !== 1;
+  let ax = fromOpen ? from.x : cellMid(s % N), az = fromOpen ? from.z : cellMid((s / N) | 0);
+  if (ax !== from.x || az !== from.z) out.push({ x: ax, z: az });
+  // (the last one is the end itself, which may sit anywhere in the goal's cell)
+  const pt = (t) => t === cells.length - 1 ? end : { x: cellMid(cells[t] % N), z: cellMid((cells[t] / N) | 0) };
+  let k = 0;
+  while (k < cells.length - 1) {
+    let far = k + 1;
+    for (let t = cells.length - 1; t > k + 1; t--) { const q = pt(t); if (walkLine(m, ax, az, q.x, q.z)) { far = t; break; } }
+    k = far;
+    if (k === cells.length - 1) break;
+    const q = pt(k); ax = q.x; az = q.z; out.push(q);
+  }
+  out.push(end);
+  return out;
+}
+// at most 4 paths are worked out each frame (the rest wait a frame), so a crowd starting at once can't stall one
+const walkBudget = { t: -1, n: 0 };
+function mayPlanWalk() { if (walkBudget.t !== clockT.now) { walkBudget.t = clockT.now; walkBudget.n = 0; } return walkBudget.n++ < 4; }
+
+// Places a bot can be sent to stand, each held by one bot at a time (District.claimSpot): idle spots around the plaza
+// and by the kiosk, spots beside the pad where finished helpers wait, and spare spots for a bot when every desk is
+// taken (none in the aisles between desks, where a bot standing would block the way). face: which way the bot looks
+// there (null: its own idle look). FAN: where a helper stands to hand its result
+// to the lead, around the lead.
+const toKiosk = (x, z) => Math.atan2(KIOSK.x - x, KIOSK.z - z);
+const SPOT_PLACES = {
+  idle: [...IDLE_SPOTS.map(([x, z]) => ({ x, z, face: null })), { x: 4.3, z: -1.2, face: toKiosk(4.3, -1.2) }], // (a bot by the kiosk may have a coffee)
+  pad: [[1.1, 1.3], [2.2, 0.5], [0.1, 2.3], [2.2, 1.9]].map(([x, z]) => ({ x: PAD.x + x, z: PAD.z + z, face: 0.4 })),
+  spare: [[0, 5.6], [-3.3, 5.4], [3.3, 5.4], [-6.4, 2.6], [6.4, 2.6]].map(([x, z]) => ({ x, z, face: Math.PI })), // round the plaza's edge, out of the aisles
+};
+const FAN = [[1.3, 0.35], [-1.3, 0.35], [1.2, -0.9], [-1.2, -0.9], [0, -1.3]];
+// where helpers beam in: the pad, then around it when several arrive at once (then wherever's clear nearest it)
+const ARRIVALS = [{ x: PAD.x, z: PAD.z }, ...Array.from({ length: 6 }, (_, k) => ({ x: PAD.x + Math.sin(k * TAU / 6) * 1.1, z: PAD.z + Math.cos(k * TAU / 6) * 1.1 }))];
 
 function facadeTextures(hue, seed) {
   const r = rng(seed);
@@ -2289,10 +2479,11 @@ class District {
     this.tokens = 0; this.tokenRate = 0; this._lastTok = null; this._lastTokT = 0;
     this.webT = 0; this.steamT = 0;
     this.windowLit = []; this.lots = []; this.builtLots = 0; this.devScore = 0; this.helperIds = new Set();
-    this.cars = [];
+    this.cars = []; this.walkTrees = []; this.spotHolders = new Map(); this.fanHolders = [];
     this.lotItems = []; this.lotBake = null; this.lotsDirty = false; this.towerBake = null; this.bakedFloors = 0;
     this.billboardText = ''; this.signName = '';
     this.build();
+    this.walk = makeWalkMap(this.walkTrees);
     scene.add(this.group);
   }
 
@@ -2352,12 +2543,15 @@ class District {
     for (const sx of [-0.66, 0.66]) { const p2 = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.55, 6), stdMat(0x2c3142)); p2.position.set(sx, 1.72, 0.42); kiosk.add(p2); }
     const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.065, 0.16, 10), stdMat(0xffffff)); cup.position.set(0.3, 1.03, 0.1); kiosk.add(cup);
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.22), glowMat(0xffb547, 0.6, 2.4, { base: 0x3a2a12 })); sign.position.set(0, 2.33, 0.53); kiosk.add(sign);
-    kiosk.rotation.y = -0.5;
+    kiosk.rotation.y = KIOSK_ROT;
     const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.95, 0.12, 32), stdMat(0x2a3044, { metalness: 0.5, roughness: 0.4 })); pad.position.copy(PAD).setY(0.12); pad.receiveShadow = true; G.add(pad);
     this.padRing = new THREE.Mesh(new THREE.TorusGeometry(0.72, 0.045, 6, 40).rotateX(Math.PI / 2), glowMat(0x6ae6f5, 0.9, 2.6, { own: true })); this.padRing.position.copy(PAD).setY(0.2); G.add(this.padRing);
-    for (const sx of [-1, 1]) { const t = makeTree(r, (0.95 + r() * 0.3) * 1.2); t.position.set(sx * (5.0 + r() * 0.3), 0, -5.3 - r() * 0.3); G.add(t); }
-    const bench = new THREE.Mesh(new RoundedBoxGeometry(1.5, 0.16, 0.48, 2, 0.06), stdMat(0xa8754f)); bench.position.set(5.6, 0.45, -1.0); bench.rotation.y = -1.2; bench.castShadow = true; G.add(bench);
-    const benchShadow = contactShadow(1.8, 0.75, PLAZA_TOP + 0.03, 5.6, -1.0); benchShadow.rotation.y = -1.2; G.add(benchShadow);
+    for (const sx of [-1, 1]) {
+      const sz = (0.95 + r() * 0.3) * 1.2, t = makeTree(r, sz); t.position.set(sx * (5.0 + r() * 0.3), 0, -5.3 - r() * 0.3); G.add(t);
+      this.walkTrees.push({ x: t.position.x, z: t.position.z, r: 0.72 * sz }); // its branches, at a bot's height
+    }
+    const bench = new THREE.Mesh(new RoundedBoxGeometry(1.5, 0.16, 0.48, 2, 0.06), stdMat(0xa8754f)); bench.position.set(BENCH.x, 0.45, BENCH.z); bench.rotation.y = BENCH.rot; bench.castShadow = true; G.add(bench);
+    const benchShadow = contactShadow(1.8, 0.75, PLAZA_TOP + 0.03, BENCH.x, BENCH.z); benchShadow.rotation.y = BENCH.rot; G.add(benchShadow);
 
     // street lamps on the sidewalk, trees on the outer edge, the gate
     for (const a of [0.2, -0.2, 1.03, -1.03, 1.83, -1.83, 2.48, -2.48]) { const l = makeLamp(); l.scale.setScalar(1.45); l.position.set(Math.sin(a) * WALK_R, 0.12, Math.cos(a) * WALK_R); G.add(l); }
@@ -2506,6 +2700,46 @@ class District {
     return null;
   }
   releaseDesk(bot) { for (const d of this.desks) if (d.occupant === bot) { d.occupant = null; d.screen.visible = false; } }
+  // a place of a kind (SPOT_PLACES) for bot to stand, held until it claims another or lets go; null when every one
+  // is taken. fresh: move on to a different one (an idle bot wandering)
+  claimSpot(bot, kind, fresh = false) {
+    const mine = bot.spotKind === kind ? bot.spot : null;
+    if (mine && !fresh) return mine;
+    const free = SPOT_PLACES[kind].filter((p) => p !== mine && !this.spotHolders.has(p));
+    if (!free.length) return mine;
+    const p = kind === 'idle' ? free[Math.floor(Math.random() * free.length)] : free[0];
+    this.releaseSpots(bot);
+    this.spotHolders.set(p, bot); bot.spot = p; bot.spotKind = kind;
+    return p;
+  }
+  // where a helper stands to hand its result to the lead: a place around the lead nobody else holds, open on the walk map
+  deliverySpot(bot, lead) {
+    const ok = (i) => (!this.fanHolders[i] || this.fanHolders[i] === bot) && walkable(this, lead.pos.x + FAN[i][0], lead.pos.z + FAN[i][1])
+      && !this.standingNear(lead.pos.x + FAN[i][0], lead.pos.z + FAN[i][1], bot);
+    let i = bot.fanI ?? -1;
+    if (i < 0 || !ok(i)) { i = FAN.findIndex((f, k) => ok(k)); if (i < 0) return null; this.releaseSpots(bot); this.fanHolders[i] = bot; bot.fanI = i; }
+    return { x: lead.pos.x + FAN[i][0], z: lead.pos.z + FAN[i][1], face: Math.atan2(-FAN[i][0], -FAN[i][1]) };
+  }
+  releaseSpots(bot) {
+    if (bot.spot && this.spotHolders.get(bot.spot) === bot) this.spotHolders.delete(bot.spot);
+    if (bot.fanI >= 0 && this.fanHolders[bot.fanI] === bot) this.fanHolders[bot.fanI] = null;
+    bot.spot = null; bot.spotKind = null; bot.fanI = -1;
+  }
+  // is another bot (not `but`) standing within a bot's room of (x, z)?
+  standingNear(x, z, but) {
+    for (const b of this.robots.values()) if (b !== but && b.solid() && !b.walking && Math.hypot(b.pos.x - x, b.pos.z - z) < BOT_GAP + 0.1) return true;
+    return false;
+  }
+  // where a helper beams in: the pad, or around it, clear of every bot and of every spot a bot is headed for; with all
+  // of those taken, the open place nearest the pad that is clear of them
+  arrivalPoint() {
+    const taken = [...this.spotHolders.keys()];
+    for (const b of this.robots.values()) if (!b.gone) taken.push(b.pos);
+    const busy = (x, z) => taken.some((p) => Math.hypot(p.x - x, p.z - z) < BOT_GAP + 0.1);
+    for (const p of ARRIVALS) if (!busy(p.x, p.z) && walkable(this, p.x, p.z)) return p;
+    const c = nearestOpen(withBots(this.walk, taken, BOT_GAP + 0.1), cellOf(PAD.x), cellOf(PAD.z));
+    return c >= 0 ? { x: cellMid(c % WALK_N), z: cellMid((c / WALK_N) | 0) } : { x: PAD.x, z: PAD.z };
+  }
 
   addResultCube() {
     const desk = this.desks[0];
@@ -2906,13 +3140,16 @@ class Robot {
     if (!city.primed || district.rise < 1) { this.mode = 'live'; this.scale = 1; this.snap = true; }
     else if (this.isLead) { this.pos.copy(DOOR); this.mode = 'live'; this.heading = 0; this.scale = 1; }
     else {
-      this.pos.copy(PAD).add(new THREE.Vector3((Math.random() - .5) * 0.3, 0, (Math.random() - .5) * 0.3));
+      const at = district.arrivalPoint(); this.pos.set(at.x, 0, at.z); // the pad, or beside it while another bot stands there
       this.mode = 'beamIn'; this.scale = 0;
-      this.beam = makeBeam(0x6ae6f5); this.beam.position.copy(PAD).setY(0.15); this.beam.scale.set(0.75, 9, 0.75); district.group.add(this.beam);
+      this.beam = makeBeam(0x6ae6f5); this.beam.position.copy(this.pos).setY(0.15); this.beam.scale.set(0.75, 9, 0.75); district.group.add(this.beam);
       sfx('spawn');
       queueMicrotask(() => cityEvent('spawn', this));
     }
     this.t = 0; this.goal = null; this.atDesk = false; this.desk = null; this.walking = false;
+    // where it stands (a spot or a place around the lead it holds) and the path it walks there (walkToward)
+    this.spot = null; this.spotKind = null; this.fanI = -1; this.newIdle = false;
+    this.path = null; this.pathTo = null; this.repathT = 0; this.stuckT = 0; this.waitEnd = 0; this.stepT = 0; this.near = { x: 0, z: 0, d: Infinity };
     this.leaving = false; this.gone = false;
     this.delivering = false; this.delivered = false; this.carry = null;
     this.kindSince = performance.now(); this.cheerT = 0; this.errT = 0; this.fxT = 0; this.arcT = 0; this.tetherT = 0;
@@ -2920,9 +3157,8 @@ class Robot {
     const r = rng(hash(this.key));
     this.nick = (this.isLead && customLeadName(a.name, district.title)) || nickFor(this.key, takenNicks());
     nickCache.set(this.key, this.nick);
-    this.idleSpot = new THREE.Vector3(KIOSK.x - 0.8 + r() * 1.6 - 1.0, 0, KIOSK.z + 1.2 + r() * 1.4);
     this.idleFace = -1.9 + r() * 1.4;
-    this.wanderT = 4 + r() * 8; this.wanderI = Math.floor(r() * IDLE_SPOTS.length);
+    this.wanderT = 4 + r() * 8;
     // moods and life moments (browser memory only; they start over on reload)
     this.workSince = this.idleSince = this.localWaitSince = Date.now();
     this.moment = null; this.momentT = 4 + r() * 8; this.lookAt = null; this.glance = 0; this.glanceT = 2 + r() * 4;
@@ -3065,7 +3301,7 @@ class Robot {
 
   leave() {
     this.leaving = true; this.t = 0; this.moment = null; this.lookAt = null;
-    this.d.releaseDesk(this);
+    this.d.releaseDesk(this); this.d.releaseSpots(this);
     this.clearArc(); this.clearTether();
     if (this.isLead) { this.mode = 'doorOut'; }
     else {
@@ -3081,28 +3317,122 @@ class Robot {
     if (this.mode === 'doorOut') return { x: DOOR.x, z: DOOR.z, face: Math.PI };
     if (this.d.asleep) return null; // asleep districts stay put
     if (this.moment?.hold) return this.goal || { x: this.pos.x, z: this.pos.z, face: this.heading }; // stay put for a salute, high-five or wave
+    // every place it's sent is its own (a desk, a spot, a place around the lead), so no two bots stand in one place
     if (this.delivering) {
       const lead = this.d.lead();
-      if (lead && lead !== this) return { x: lead.pos.x + 1.3, z: lead.pos.z + 0.35, face: -Math.PI / 2, deliver: true };
-      return { x: DESKS[0][0] + 1.3, z: DESKS[0][1] - 0.6, face: -Math.PI / 2, deliver: true };
+      if (!lead || lead === this) return { x: DESKS[0][0] + 1.3, z: DESKS[0][1] - 0.6, face: -Math.PI / 2, deliver: true };
+      const s = this.d.deliverySpot(this, lead);
+      if (s) return { ...s, deliver: true };
+      return this.spareGoal(); // everyone's around the lead already: wait for a place
     }
-    if (!this.isLead && a.status === 'done') { this.d.releaseDesk(this); return { x: PAD.x + 0.9, z: PAD.z + 1.1, face: 0.4 }; }
+    if (!this.isLead && a.status === 'done') {
+      this.d.releaseDesk(this);
+      const s = this.d.claimSpot(this, 'pad');
+      return s ? { x: s.x, z: s.z, face: s.face } : this.spareGoal();
+    }
     if (a.status === 'idle' && !a.waiting) {
       this.d.releaseDesk(this);
-      if (this.wanderI < 0) return { x: this.idleSpot.x, z: this.idleSpot.z, face: this.idleFace };
-      const [wx, wz] = IDLE_SPOTS[this.wanderI % IDLE_SPOTS.length];
-      return { x: wx + (hash(this.key) % 7) * 0.12 - 0.36, z: wz, face: this.idleFace };
+      const s = this.d.claimSpot(this, 'idle', this.newIdle); this.newIdle = false;
+      return s ? { x: s.x, z: s.z, face: s.face ?? this.idleFace } : this.spareGoal();
     }
     const desk = this.d.freeDesk(this);
-    if (desk) { this.desk = desk; return { x: desk.x, z: desk.z - 0.92, face: 0, desk }; }
-    return { x: this.idleSpot.x - 1.2, z: this.idleSpot.z + 1.4, face: -0.6 };
+    if (desk) { if (this.spot || this.fanI >= 0) this.d.releaseSpots(this); this.desk = desk; return { x: desk.x, z: desk.z - 0.92, face: 0, desk }; }
+    return this.spareGoal();
+  }
+  // a spare place to stand when every desk (or spot) is taken; with none left, it stays where it is
+  spareGoal() {
+    const s = this.d.claimSpot(this, 'spare');
+    return s ? { x: s.x, z: s.z, face: s.face } : { x: this.pos.x, z: this.pos.z, face: this.heading };
+  }
+  // in the way of other bots: standing or walking in the district (not one fading in or out)
+  solid() { return !this.gone && (this.mode === 'live' || this.mode === 'doorOut' || this.mode === 'beamIn') && this.scale > 0.3; }
+  // One step toward g along its path (walkPath): around desks, buildings, trees and the bots standing about, aside for
+  // a bot just ahead (both keep to their right, or step left when the right is blocked), and never into another bot
+  // (only walking bots give way: one standing stays put). Returns whether the bot is walking. A bot that gets no
+  // nearer its next waypoint for 1.5 s (blocked, or stepping to and fro) looks for a new path around the bots in its way.
+  walkToward(g, speed, dt) {
+    const d = this.d;
+    this.repathT -= dt;
+    const moved = !this.pathTo || Math.hypot(g.x - this.pathTo.x, g.z - this.pathTo.z) > 0.5;
+    if (this.repathT <= 0 && (moved || this.stuckT > 1.5) && mayPlanWalk()) {
+      const standing = []; for (const o of d.robots.values()) if (o !== this && o.solid() && (!o.walking || o.stuckT > 0.5)) standing.push(o.pos); // and bots held up
+      let path = walkPath(d, this.pos, g, standing);
+      if (!path && this.spotKind && this.moveOn()) { this.path = this.pathTo = null; this.stepT = 0; return false; } // cut off: another spot, next frame
+      this.path = path || walkPath(d, this.pos, g); // boxed in by bots: around the furniture only, and it waits its turn
+      if (!this.path) { this.path = [{ x: g.x, z: g.z }]; if (!this.noWayLogged) { this.noWayLogged = true; console.warn('Skyborne: a Skybot found no way through; it walks straight', this.key, g); } }
+      this.pathTo = { x: g.x, z: g.z }; this.repathT = moved ? 0.5 : 1.5;
+      if (moved) this.stuckT = 0;
+    }
+    const path = this.path;
+    this.stepT -= dt;
+    if (!path) return false; // its path is worked out next frame
+    // boxed in (two bots in each other's way): stand a moment, then try again. Each waits its own while, so one goes
+    // first and the other, standing, is planned around
+    if (this.stuckT > 4) { this.waitEnd ||= 5.2 + Math.random() * 2.5; this.stuckT += dt; if (this.stuckT < this.waitEnd) return false; this.stuckT = 1.6; this.waitEnd = 0; }
+    while (path.length > 1 && Math.hypot(path[0].x - this.pos.x, path[0].z - this.pos.z) < 0.12) path.shift();
+    const wp = path.length > 1 ? path[0] : g; // the last stretch goes to the goal itself, wherever it is now
+    let ux = wp.x - this.pos.x, uz = wp.z - this.pos.z;
+    const left = Math.hypot(ux, uz);
+    if (left < 1e-6) return false;
+    ux /= left; uz /= left;
+    let side = 0, slow = 1; // how hard to step aside, to the right of travel: (-uz, ux) when facing (ux, uz)
+    for (const o of d.robots.values()) {
+      if (o === this || !o.solid()) continue;
+      const ox = o.pos.x - this.pos.x, oz = o.pos.z - this.pos.z, od = Math.hypot(ox, oz);
+      if (od > 1.3 || od < 1e-6 || od > left + 0.6) continue; // far, or past where it's going
+      if ((ox * ux + oz * uz) / od < 0.45) continue; // not ahead
+      side = Math.max(side, (1.3 - od) / 1.3 * 1.6);
+      if (!o.walking && od < 1.0) slow = 0.6;
+    }
+    const step = Math.min(left, speed * slow * dt), here = walkable(d, this.pos.x, this.pos.z);
+    const tryDir = (k) => { const vx = ux - uz * k, vz = uz + ux * k, vl = Math.hypot(vx, vz); return { x: this.pos.x + vx / vl * step, z: this.pos.z + vz / vl * step }; };
+    let next = tryDir(side);
+    if (here && side && !walkable(d, next.x, next.z)) next = tryDir(-side); // the right is blocked: step left
+    if (here && !walkable(d, next.x, next.z)) next = tryDir(0); // no room either side: straight on
+    if (here && !walkable(d, next.x, next.z)) { // straight on runs into an edge: slide along it
+      next = walkable(d, next.x, this.pos.z) ? { x: next.x, z: this.pos.z } : walkable(d, this.pos.x, next.z) ? { x: this.pos.x, z: next.z } : { x: this.pos.x, z: this.pos.z };
+    }
+    let nx = next.x, nz = next.z;
+    for (const o of d.robots.values()) {
+      if (o === this || !o.solid()) continue;
+      const px = nx - o.pos.x, pz = nz - o.pos.z, pd = Math.hypot(px, pz);
+      if (pd >= BOT_GAP) continue;
+      const push = (BOT_GAP - pd) * (o.walking ? 0.5 : 1);
+      const qx = pd > 1e-6 ? px / pd : -uz, qz = pd > 1e-6 ? pz / pd : ux;
+      if (walkable(d, nx + qx * push, nz + qz * push) || !here) { nx += qx * push; nz += qz * push; }
+    }
+    // no room to give way (a bot by a bench or a wall): it doesn't squeeze past, it stops and looks for another way
+    for (const o of d.robots.values()) {
+      if (o === this || !o.solid()) continue;
+      const nd = Math.hypot(nx - o.pos.x, nz - o.pos.z);
+      // (a little give at the edge, so two bots just touching can still slide past each other: none ever comes nearer than BOT_GAP - 0.05)
+      if (nd < BOT_GAP - 0.05 && nd < Math.hypot(this.pos.x - o.pos.x, this.pos.z - o.pos.z) - 1e-6) {
+        nx = this.pos.x; nz = this.pos.z;
+        if (!o.walking || o.stuckT > 0.5) { this.stuckT = Math.max(this.stuckT, 1.51); this.repathT = Math.min(this.repathT, 0.3); } // in its way for now: look for a way round soon
+        break;
+      }
+    }
+    const went = Math.hypot(nx - this.pos.x, nz - this.pos.z), near = this.near, dw = Math.hypot(wp.x - nx, wp.z - nz);
+    if (Math.hypot(wp.x - near.x, wp.z - near.z) > 0.01) { near.x = wp.x; near.z = wp.z; near.d = Infinity; } // a new waypoint
+    if (dw < near.d - 0.05) { near.d = dw; this.stuckT = 0; } else this.stuckT += dt;
+    if (went > 1e-4) this.heading = angleDamp(this.heading, Math.atan2(nx - this.pos.x, nz - this.pos.z), 10, dt);
+    if (went > 1e-3) this.stepT = 0.25; // its legs walk while it really moves (animate), not while it's held up
+    this.pos.x = nx; this.pos.z = nz;
+    return true;
+  }
+  // Its spot can only be reached past bots standing in the way: it lets the spot go for another of the kind, or (an
+  // idle bot, with every idle spot taken) for a spare one. False when there's no other.
+  moveOn() {
+    const was = this.spot, kind = this.spotKind, s = this.d.claimSpot(this, kind, true);
+    if (s && s !== was) return true;
+    return kind === 'idle' && !!this.d.claimSpot(this, 'spare');
   }
 
   update(dt) {
     this.t += dt;
     const a = this.data;
     this.tickMoment(dt);
-    if (a.status === 'idle' && !this.walking && !this.moment) { this.wanderT -= dt; if (this.wanderT <= 0) { this.wanderT = 9 + Math.random() * 9; this.wanderI = Math.random() < 0.3 ? -1 : Math.floor(Math.random() * IDLE_SPOTS.length); } }
+    if (a.status === 'idle' && !this.walking && !this.moment) { this.wanderT -= dt; if (this.wanderT <= 0) { this.wanderT = 9 + Math.random() * 9; this.newIdle = true; } }
     // entrances and exits
     if (this.mode === 'beamIn') {
       const k = this.t;
@@ -3129,13 +3459,9 @@ class Robot {
       if (this.goal && this.snap) { this.pos.set(this.goal.x, 0, this.goal.z); this.heading = this.goal.face ?? 0; this.groundY = groundAt(this.pos.x, this.pos.z); }
       this.snap = false;
       if (this.goal) {
-        const dx = this.goal.x - this.pos.x, dz = this.goal.z - this.pos.z, dist = Math.hypot(dx, dz);
-        if (dist > 0.06) {
-          walking = true;
-          const sp = Math.min(dist, (this.delivering ? 2.1 : 1.7) * dt);
-          this.pos.x += (dx / dist) * sp; this.pos.z += (dz / dist) * sp;
-          this.heading = angleDamp(this.heading, Math.atan2(dx, dz), 10, dt);
-        } else {
+        if (Math.hypot(this.goal.x - this.pos.x, this.goal.z - this.pos.z) > 0.06) walking = this.walkToward(this.goal, this.delivering ? 2.1 : 1.7, dt);
+        else {
+          this.path = null; this.pathTo = null; this.stuckT = 0;
           this.heading = angleDamp(this.heading, this.goal.face ?? this.heading, 7, dt);
           if (this.goal.deliver && this.delivering) this.finishDelivery();
           if (this.mode === 'doorOut') { this.gone = true; return; }
@@ -3144,7 +3470,7 @@ class Robot {
     }
     this.walking = walking;
     if (this.moment && walking && !this.moment.hold) this.moment = null;
-    this.atDesk = !walking && !!this.goal?.desk && this.mode === 'live';
+    this.atDesk = !walking && !!this.goal?.desk && this.mode === 'live' && Math.hypot(this.goal.x - this.pos.x, this.goal.z - this.pos.z) <= 0.06; // there, not waiting on the way
     // stand on the plaza, the pad or the grass, stepping up and down smoothly
     this.groundY = damp(this.groundY, groundAt(this.pos.x, this.pos.z), 14, dt);
     this.root.position.copy(this.pos).setY(this.groundY + BOT_FEET);
@@ -3276,12 +3602,16 @@ class Robot {
     const mood = this.moodV;
     if (this.mode === 'beamIn' || this.mode === 'beamOut') {
       tgt.armLz = 0.5; tgt.armRz = -0.5; face = 'happy'; eye = EYE.working;
-    } else if (this.walking) {
+    } else if (this.walking && this.stepT > 0) {
       this.walkPhase += dt * 10;
       const s = Math.sin(this.walkPhase);
       tgt.legL = s * 0.6; tgt.legR = -s * 0.6; tgt.armLx = -s * 0.5; tgt.armRx = s * 0.5; tgt.bob = Math.abs(Math.cos(this.walkPhase)) * 0.06;
       if (this.carry) { tgt.armLx = tgt.armRx = -1.25; tgt.armLz = 0.25; tgt.armRz = -0.25; face = 'happy'; eye = EYE.done; }
       else face = a.status === 'idle' ? 'normal' : a.status === 'done' ? 'happy' : 'focus';
+    } else if (this.walking) {
+      // held up by another bot on its way: it stands and looks about until the way clears
+      tgt.headY = Math.sin(t * 1.6) * 0.45; tgt.bob = Math.sin(t * 1.6) * 0.01;
+      if (this.carry) { tgt.armLx = tgt.armRx = -1.25; tgt.armLz = 0.25; tgt.armRz = -0.25; }
     } else if (asleep) {
       tgt.headX = 0.45; tgt.armLz = 0.05; tgt.armRz = -0.05; tgt.bob = Math.sin(t * 1.3) * 0.012 - 0.02; tgt.lean = 0.08;
       face = 'sleep'; eye = EYE.sleep;
@@ -3479,7 +3809,7 @@ class Robot {
     this.clearArc(); this.clearTether();
     if (this.beam) disposeMesh(this.beam);
     if (this.carry) this.bob.remove(this.carry);
-    this.d.releaseDesk(this);
+    this.d.releaseDesk(this); this.d.releaseSpots(this);
     this.root.remove(this.label); this.labelEl.remove();
     this.d.group.remove(this.root);
     this.faceTex.dispose(); this.faceMat.dispose(); this.bodyMat.dispose(); this.tipMat.dispose();
@@ -5221,6 +5551,14 @@ function useSource(next) {
   begin();
 }
 function connect() { useSource(window.__skyborneFake || liveSource()); }
+// for the smoke tests: run every district for `seconds` in steps of dt, without drawing; each() after every step
+function simulate(seconds, dt = 0.05, each = null) {
+  for (let t = 0; t < seconds - 1e-9; t += dt) {
+    clockT.now += dt;
+    for (const d of city.districts.values()) if (!d.dead) d.update(dt);
+    if (each) each();
+  }
+}
 
 // live: /events sends names, every recent session, `ready`, the open permission requests (`asks`),
 // then each change. After a reconnect (the server restarted) the new set replaces the old one at
@@ -5355,7 +5693,9 @@ setInterval(() => { if (askUI.size && prefs.console) tickAsks(); }, 1000);
 ensureLoop(1); buildSkyTraffic();
 window.__skyborne = { composer, mayorName, customLeadName, city, director, transit, selectDistrict, selectBot, overview, renderer, scene, camera, controls, renderTokTip, playRecording, backToLive, audioState: () => actx && actx.state,
   // for the smoke tests: the pure helpers, and the console's own drawing
-  isLive, isBusy, visibleDocs, layoutTimeline, fmtDur, detail, openDetail, closeDetail, showDocs, renderUI, drawLog, drawSteps, logRows: () => logRows, Car, LANE_IN, LANE_OUT };
+  isLive, isBusy, visibleDocs, layoutTimeline, fmtDur, detail, openDetail, closeDetail, showDocs, renderUI, drawLog, drawSteps, logRows: () => logRows, Car, LANE_IN, LANE_OUT,
+  // the walk map and a city run without drawing (simulate), fed by a source the test drives (useSource)
+  useSource, simulate, walkable, walkCell, walkPath, walkShapes, shapeDist, SPOT_PLACES, FAN, DESKS, BOT_R };
 requestAnimationFrame(frame);
 if (DEMO) {
   // the static site: its recording plays on a loop beside the sample districts, and nothing connects to a server

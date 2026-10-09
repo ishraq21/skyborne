@@ -110,13 +110,16 @@ class Robot {
     if (!city.primed || district.rise < 1) { this.mode = 'live'; this.scale = 1; this.snap = true; }
     else if (this.isLead) { this.pos.copy(DOOR); this.mode = 'live'; this.heading = 0; this.scale = 1; }
     else {
-      this.pos.copy(PAD).add(new THREE.Vector3((Math.random() - .5) * 0.3, 0, (Math.random() - .5) * 0.3));
+      const at = district.arrivalPoint(); this.pos.set(at.x, 0, at.z); // the pad, or beside it while another bot stands there
       this.mode = 'beamIn'; this.scale = 0;
-      this.beam = makeBeam(0x6ae6f5); this.beam.position.copy(PAD).setY(0.15); this.beam.scale.set(0.75, 9, 0.75); district.group.add(this.beam);
+      this.beam = makeBeam(0x6ae6f5); this.beam.position.copy(this.pos).setY(0.15); this.beam.scale.set(0.75, 9, 0.75); district.group.add(this.beam);
       sfx('spawn');
       queueMicrotask(() => cityEvent('spawn', this));
     }
     this.t = 0; this.goal = null; this.atDesk = false; this.desk = null; this.walking = false;
+    // where it stands (a spot or a place around the lead it holds) and the path it walks there (walkToward)
+    this.spot = null; this.spotKind = null; this.fanI = -1; this.newIdle = false;
+    this.path = null; this.pathTo = null; this.repathT = 0; this.stuckT = 0; this.waitEnd = 0; this.stepT = 0; this.near = { x: 0, z: 0, d: Infinity };
     this.leaving = false; this.gone = false;
     this.delivering = false; this.delivered = false; this.carry = null;
     this.kindSince = performance.now(); this.cheerT = 0; this.errT = 0; this.fxT = 0; this.arcT = 0; this.tetherT = 0;
@@ -124,9 +127,8 @@ class Robot {
     const r = rng(hash(this.key));
     this.nick = (this.isLead && customLeadName(a.name, district.title)) || nickFor(this.key, takenNicks());
     nickCache.set(this.key, this.nick);
-    this.idleSpot = new THREE.Vector3(KIOSK.x - 0.8 + r() * 1.6 - 1.0, 0, KIOSK.z + 1.2 + r() * 1.4);
     this.idleFace = -1.9 + r() * 1.4;
-    this.wanderT = 4 + r() * 8; this.wanderI = Math.floor(r() * IDLE_SPOTS.length);
+    this.wanderT = 4 + r() * 8;
     // moods and life moments (browser memory only; they start over on reload)
     this.workSince = this.idleSince = this.localWaitSince = Date.now();
     this.moment = null; this.momentT = 4 + r() * 8; this.lookAt = null; this.glance = 0; this.glanceT = 2 + r() * 4;
@@ -269,7 +271,7 @@ class Robot {
 
   leave() {
     this.leaving = true; this.t = 0; this.moment = null; this.lookAt = null;
-    this.d.releaseDesk(this);
+    this.d.releaseDesk(this); this.d.releaseSpots(this);
     this.clearArc(); this.clearTether();
     if (this.isLead) { this.mode = 'doorOut'; }
     else {
@@ -285,28 +287,122 @@ class Robot {
     if (this.mode === 'doorOut') return { x: DOOR.x, z: DOOR.z, face: Math.PI };
     if (this.d.asleep) return null; // asleep districts stay put
     if (this.moment?.hold) return this.goal || { x: this.pos.x, z: this.pos.z, face: this.heading }; // stay put for a salute, high-five or wave
+    // every place it's sent is its own (a desk, a spot, a place around the lead), so no two bots stand in one place
     if (this.delivering) {
       const lead = this.d.lead();
-      if (lead && lead !== this) return { x: lead.pos.x + 1.3, z: lead.pos.z + 0.35, face: -Math.PI / 2, deliver: true };
-      return { x: DESKS[0][0] + 1.3, z: DESKS[0][1] - 0.6, face: -Math.PI / 2, deliver: true };
+      if (!lead || lead === this) return { x: DESKS[0][0] + 1.3, z: DESKS[0][1] - 0.6, face: -Math.PI / 2, deliver: true };
+      const s = this.d.deliverySpot(this, lead);
+      if (s) return { ...s, deliver: true };
+      return this.spareGoal(); // everyone's around the lead already: wait for a place
     }
-    if (!this.isLead && a.status === 'done') { this.d.releaseDesk(this); return { x: PAD.x + 0.9, z: PAD.z + 1.1, face: 0.4 }; }
+    if (!this.isLead && a.status === 'done') {
+      this.d.releaseDesk(this);
+      const s = this.d.claimSpot(this, 'pad');
+      return s ? { x: s.x, z: s.z, face: s.face } : this.spareGoal();
+    }
     if (a.status === 'idle' && !a.waiting) {
       this.d.releaseDesk(this);
-      if (this.wanderI < 0) return { x: this.idleSpot.x, z: this.idleSpot.z, face: this.idleFace };
-      const [wx, wz] = IDLE_SPOTS[this.wanderI % IDLE_SPOTS.length];
-      return { x: wx + (hash(this.key) % 7) * 0.12 - 0.36, z: wz, face: this.idleFace };
+      const s = this.d.claimSpot(this, 'idle', this.newIdle); this.newIdle = false;
+      return s ? { x: s.x, z: s.z, face: s.face ?? this.idleFace } : this.spareGoal();
     }
     const desk = this.d.freeDesk(this);
-    if (desk) { this.desk = desk; return { x: desk.x, z: desk.z - 0.92, face: 0, desk }; }
-    return { x: this.idleSpot.x - 1.2, z: this.idleSpot.z + 1.4, face: -0.6 };
+    if (desk) { if (this.spot || this.fanI >= 0) this.d.releaseSpots(this); this.desk = desk; return { x: desk.x, z: desk.z - 0.92, face: 0, desk }; }
+    return this.spareGoal();
+  }
+  // a spare place to stand when every desk (or spot) is taken; with none left, it stays where it is
+  spareGoal() {
+    const s = this.d.claimSpot(this, 'spare');
+    return s ? { x: s.x, z: s.z, face: s.face } : { x: this.pos.x, z: this.pos.z, face: this.heading };
+  }
+  // in the way of other bots: standing or walking in the district (not one fading in or out)
+  solid() { return !this.gone && (this.mode === 'live' || this.mode === 'doorOut' || this.mode === 'beamIn') && this.scale > 0.3; }
+  // One step toward g along its path (walkPath): around desks, buildings, trees and the bots standing about, aside for
+  // a bot just ahead (both keep to their right, or step left when the right is blocked), and never into another bot
+  // (only walking bots give way: one standing stays put). Returns whether the bot is walking. A bot that gets no
+  // nearer its next waypoint for 1.5 s (blocked, or stepping to and fro) looks for a new path around the bots in its way.
+  walkToward(g, speed, dt) {
+    const d = this.d;
+    this.repathT -= dt;
+    const moved = !this.pathTo || Math.hypot(g.x - this.pathTo.x, g.z - this.pathTo.z) > 0.5;
+    if (this.repathT <= 0 && (moved || this.stuckT > 1.5) && mayPlanWalk()) {
+      const standing = []; for (const o of d.robots.values()) if (o !== this && o.solid() && (!o.walking || o.stuckT > 0.5)) standing.push(o.pos); // and bots held up
+      let path = walkPath(d, this.pos, g, standing);
+      if (!path && this.spotKind && this.moveOn()) { this.path = this.pathTo = null; this.stepT = 0; return false; } // cut off: another spot, next frame
+      this.path = path || walkPath(d, this.pos, g); // boxed in by bots: around the furniture only, and it waits its turn
+      if (!this.path) { this.path = [{ x: g.x, z: g.z }]; if (!this.noWayLogged) { this.noWayLogged = true; console.warn('Skyborne: a Skybot found no way through; it walks straight', this.key, g); } }
+      this.pathTo = { x: g.x, z: g.z }; this.repathT = moved ? 0.5 : 1.5;
+      if (moved) this.stuckT = 0;
+    }
+    const path = this.path;
+    this.stepT -= dt;
+    if (!path) return false; // its path is worked out next frame
+    // boxed in (two bots in each other's way): stand a moment, then try again. Each waits its own while, so one goes
+    // first and the other, standing, is planned around
+    if (this.stuckT > 4) { this.waitEnd ||= 5.2 + Math.random() * 2.5; this.stuckT += dt; if (this.stuckT < this.waitEnd) return false; this.stuckT = 1.6; this.waitEnd = 0; }
+    while (path.length > 1 && Math.hypot(path[0].x - this.pos.x, path[0].z - this.pos.z) < 0.12) path.shift();
+    const wp = path.length > 1 ? path[0] : g; // the last stretch goes to the goal itself, wherever it is now
+    let ux = wp.x - this.pos.x, uz = wp.z - this.pos.z;
+    const left = Math.hypot(ux, uz);
+    if (left < 1e-6) return false;
+    ux /= left; uz /= left;
+    let side = 0, slow = 1; // how hard to step aside, to the right of travel: (-uz, ux) when facing (ux, uz)
+    for (const o of d.robots.values()) {
+      if (o === this || !o.solid()) continue;
+      const ox = o.pos.x - this.pos.x, oz = o.pos.z - this.pos.z, od = Math.hypot(ox, oz);
+      if (od > 1.3 || od < 1e-6 || od > left + 0.6) continue; // far, or past where it's going
+      if ((ox * ux + oz * uz) / od < 0.45) continue; // not ahead
+      side = Math.max(side, (1.3 - od) / 1.3 * 1.6);
+      if (!o.walking && od < 1.0) slow = 0.6;
+    }
+    const step = Math.min(left, speed * slow * dt), here = walkable(d, this.pos.x, this.pos.z);
+    const tryDir = (k) => { const vx = ux - uz * k, vz = uz + ux * k, vl = Math.hypot(vx, vz); return { x: this.pos.x + vx / vl * step, z: this.pos.z + vz / vl * step }; };
+    let next = tryDir(side);
+    if (here && side && !walkable(d, next.x, next.z)) next = tryDir(-side); // the right is blocked: step left
+    if (here && !walkable(d, next.x, next.z)) next = tryDir(0); // no room either side: straight on
+    if (here && !walkable(d, next.x, next.z)) { // straight on runs into an edge: slide along it
+      next = walkable(d, next.x, this.pos.z) ? { x: next.x, z: this.pos.z } : walkable(d, this.pos.x, next.z) ? { x: this.pos.x, z: next.z } : { x: this.pos.x, z: this.pos.z };
+    }
+    let nx = next.x, nz = next.z;
+    for (const o of d.robots.values()) {
+      if (o === this || !o.solid()) continue;
+      const px = nx - o.pos.x, pz = nz - o.pos.z, pd = Math.hypot(px, pz);
+      if (pd >= BOT_GAP) continue;
+      const push = (BOT_GAP - pd) * (o.walking ? 0.5 : 1);
+      const qx = pd > 1e-6 ? px / pd : -uz, qz = pd > 1e-6 ? pz / pd : ux;
+      if (walkable(d, nx + qx * push, nz + qz * push) || !here) { nx += qx * push; nz += qz * push; }
+    }
+    // no room to give way (a bot by a bench or a wall): it doesn't squeeze past, it stops and looks for another way
+    for (const o of d.robots.values()) {
+      if (o === this || !o.solid()) continue;
+      const nd = Math.hypot(nx - o.pos.x, nz - o.pos.z);
+      // (a little give at the edge, so two bots just touching can still slide past each other: none ever comes nearer than BOT_GAP - 0.05)
+      if (nd < BOT_GAP - 0.05 && nd < Math.hypot(this.pos.x - o.pos.x, this.pos.z - o.pos.z) - 1e-6) {
+        nx = this.pos.x; nz = this.pos.z;
+        if (!o.walking || o.stuckT > 0.5) { this.stuckT = Math.max(this.stuckT, 1.51); this.repathT = Math.min(this.repathT, 0.3); } // in its way for now: look for a way round soon
+        break;
+      }
+    }
+    const went = Math.hypot(nx - this.pos.x, nz - this.pos.z), near = this.near, dw = Math.hypot(wp.x - nx, wp.z - nz);
+    if (Math.hypot(wp.x - near.x, wp.z - near.z) > 0.01) { near.x = wp.x; near.z = wp.z; near.d = Infinity; } // a new waypoint
+    if (dw < near.d - 0.05) { near.d = dw; this.stuckT = 0; } else this.stuckT += dt;
+    if (went > 1e-4) this.heading = angleDamp(this.heading, Math.atan2(nx - this.pos.x, nz - this.pos.z), 10, dt);
+    if (went > 1e-3) this.stepT = 0.25; // its legs walk while it really moves (animate), not while it's held up
+    this.pos.x = nx; this.pos.z = nz;
+    return true;
+  }
+  // Its spot can only be reached past bots standing in the way: it lets the spot go for another of the kind, or (an
+  // idle bot, with every idle spot taken) for a spare one. False when there's no other.
+  moveOn() {
+    const was = this.spot, kind = this.spotKind, s = this.d.claimSpot(this, kind, true);
+    if (s && s !== was) return true;
+    return kind === 'idle' && !!this.d.claimSpot(this, 'spare');
   }
 
   update(dt) {
     this.t += dt;
     const a = this.data;
     this.tickMoment(dt);
-    if (a.status === 'idle' && !this.walking && !this.moment) { this.wanderT -= dt; if (this.wanderT <= 0) { this.wanderT = 9 + Math.random() * 9; this.wanderI = Math.random() < 0.3 ? -1 : Math.floor(Math.random() * IDLE_SPOTS.length); } }
+    if (a.status === 'idle' && !this.walking && !this.moment) { this.wanderT -= dt; if (this.wanderT <= 0) { this.wanderT = 9 + Math.random() * 9; this.newIdle = true; } }
     // entrances and exits
     if (this.mode === 'beamIn') {
       const k = this.t;
@@ -333,13 +429,9 @@ class Robot {
       if (this.goal && this.snap) { this.pos.set(this.goal.x, 0, this.goal.z); this.heading = this.goal.face ?? 0; this.groundY = groundAt(this.pos.x, this.pos.z); }
       this.snap = false;
       if (this.goal) {
-        const dx = this.goal.x - this.pos.x, dz = this.goal.z - this.pos.z, dist = Math.hypot(dx, dz);
-        if (dist > 0.06) {
-          walking = true;
-          const sp = Math.min(dist, (this.delivering ? 2.1 : 1.7) * dt);
-          this.pos.x += (dx / dist) * sp; this.pos.z += (dz / dist) * sp;
-          this.heading = angleDamp(this.heading, Math.atan2(dx, dz), 10, dt);
-        } else {
+        if (Math.hypot(this.goal.x - this.pos.x, this.goal.z - this.pos.z) > 0.06) walking = this.walkToward(this.goal, this.delivering ? 2.1 : 1.7, dt);
+        else {
+          this.path = null; this.pathTo = null; this.stuckT = 0;
           this.heading = angleDamp(this.heading, this.goal.face ?? this.heading, 7, dt);
           if (this.goal.deliver && this.delivering) this.finishDelivery();
           if (this.mode === 'doorOut') { this.gone = true; return; }
@@ -348,7 +440,7 @@ class Robot {
     }
     this.walking = walking;
     if (this.moment && walking && !this.moment.hold) this.moment = null;
-    this.atDesk = !walking && !!this.goal?.desk && this.mode === 'live';
+    this.atDesk = !walking && !!this.goal?.desk && this.mode === 'live' && Math.hypot(this.goal.x - this.pos.x, this.goal.z - this.pos.z) <= 0.06; // there, not waiting on the way
     // stand on the plaza, the pad or the grass, stepping up and down smoothly
     this.groundY = damp(this.groundY, groundAt(this.pos.x, this.pos.z), 14, dt);
     this.root.position.copy(this.pos).setY(this.groundY + BOT_FEET);
@@ -480,12 +572,16 @@ class Robot {
     const mood = this.moodV;
     if (this.mode === 'beamIn' || this.mode === 'beamOut') {
       tgt.armLz = 0.5; tgt.armRz = -0.5; face = 'happy'; eye = EYE.working;
-    } else if (this.walking) {
+    } else if (this.walking && this.stepT > 0) {
       this.walkPhase += dt * 10;
       const s = Math.sin(this.walkPhase);
       tgt.legL = s * 0.6; tgt.legR = -s * 0.6; tgt.armLx = -s * 0.5; tgt.armRx = s * 0.5; tgt.bob = Math.abs(Math.cos(this.walkPhase)) * 0.06;
       if (this.carry) { tgt.armLx = tgt.armRx = -1.25; tgt.armLz = 0.25; tgt.armRz = -0.25; face = 'happy'; eye = EYE.done; }
       else face = a.status === 'idle' ? 'normal' : a.status === 'done' ? 'happy' : 'focus';
+    } else if (this.walking) {
+      // held up by another bot on its way: it stands and looks about until the way clears
+      tgt.headY = Math.sin(t * 1.6) * 0.45; tgt.bob = Math.sin(t * 1.6) * 0.01;
+      if (this.carry) { tgt.armLx = tgt.armRx = -1.25; tgt.armLz = 0.25; tgt.armRz = -0.25; }
     } else if (asleep) {
       tgt.headX = 0.45; tgt.armLz = 0.05; tgt.armRz = -0.05; tgt.bob = Math.sin(t * 1.3) * 0.012 - 0.02; tgt.lean = 0.08;
       face = 'sleep'; eye = EYE.sleep;
@@ -683,7 +779,7 @@ class Robot {
     this.clearArc(); this.clearTether();
     if (this.beam) disposeMesh(this.beam);
     if (this.carry) this.bob.remove(this.carry);
-    this.d.releaseDesk(this);
+    this.d.releaseDesk(this); this.d.releaseSpots(this);
     this.root.remove(this.label); this.labelEl.remove();
     this.d.group.remove(this.root);
     this.faceTex.dispose(); this.faceMat.dispose(); this.bodyMat.dispose(); this.tipMat.dispose();
