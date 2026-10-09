@@ -496,7 +496,14 @@ def started(app, sid=OLD):
     for name, extra in (('SessionStart-cmdhook.json', {}), ('UserPromptSubmit.json', {'prompt': 'Make the film'})):
         body = json.dumps(payload(name, session_id=sid, **extra)).encode()
         assert request(app, 'POST', '/hook', body, {'Content-Type': 'application/json'})[0] == 200
-    assert wait_until(lambda: app.hub.knows(sid) and app.store.stats()['events'] >= 2)
+    # both in memory, not just saved: the writer hands a saved batch to the hub one event at a time (and a hook is
+    # answered before it's queued, so they can queue out of order); a test that evicts the session next mustn't have
+    # a late one put it back
+    def both():
+        with app.hub.lock:
+            s = app.hub.sessions.get(sid)
+            return bool(s and s.starts and s.prompts)
+    assert wait_until(both)
 
 
 def handed_over(app, ts, sid=OLD, new=NEW):
