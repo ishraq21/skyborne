@@ -2,13 +2,16 @@
 // =====================================================================
 // districts: one floating island per Claude Code session
 // =====================================================================
-const DESKS = [[0, 3.1], [-2.65, 2.75], [2.65, 2.75], [-1.32, 0.45], [1.32, 0.45], [-3.95, 0.55], [3.95, 0.55]];
-const DOOR = new THREE.Vector3(0, 0, -2.0);
-const PAD = new THREE.Vector3(-5.0, 0, -2.3);
-const KIOSK = new THREE.Vector3(5.0, 0, -2.4);
-const PLAZA_Z = 1.1, PLAZA_R = 5.7, PLAZA_TOP = 0.12, PAD_R = 0.95, PAD_TOP = 0.18;
-const ISLAND_R = 11.2;
-const RING1_R = 34, RING_STEP = 28;
+// The plaza and what stands on it are spread out (bots and desks keep their size), so the aisles fit a bot.
+// The HQ stands behind the desks: its front face is at TOWER_Z + HQ_D / 2, and DOOR just in front of it.
+const DESKS = [[0, 3.9], [-3.3, 3.45], [3.3, 3.45], [-1.65, 0.55], [1.65, 0.55], [-4.95, 0.7], [4.95, 0.7]];
+const TOWER_Z = -4.6, HQ_W = 6.0, HQ_D = 3.9, HQ_FLOOR_H = 1.6;
+const DOOR = new THREE.Vector3(0, 0, TOWER_Z + HQ_D / 2 + 0.1);
+const PAD = new THREE.Vector3(-6.25, 0, -2.9);
+const KIOSK = new THREE.Vector3(6.25, 0, -3.0);
+const PLAZA_Z = 1.4, PLAZA_R = 7.2, PLAZA_TOP = 0.12, PAD_R = 0.95, PAD_TOP = 0.18;
+const ISLAND_R = 16;
+const RING1_R = 46, RING_STEP = 40;
 
 function spreadOrder(n) {
   const chosen = [0];
@@ -101,22 +104,22 @@ class District {
     G.add(makeRoadRing());
 
     // the HQ tower (grows a floor as tokens burn)
-    this.tower = new THREE.Group(); this.tower.position.set(0, 0.12, -3.6); G.add(this.tower); this.tower.userData.keep = true;
-    G.add(contactShadow(6.0, 4.1, PLAZA_TOP + 0.03, 0, -3.6)); // on G: the tower group is kept, so it would never bake
+    this.tower = new THREE.Group(); this.tower.position.set(0, 0.12, TOWER_Z); G.add(this.tower); this.tower.userData.keep = true;
+    G.add(contactShadow(HQ_W * 1.3, HQ_D * 1.3, PLAZA_TOP + 0.03, 0, TOWER_Z)); // on G: the tower group is kept, so it would never bake
     const tex = facadeTextures(this.hue, this.seed);
     this.facadeMats = tex.lit.map((lt) => {
       const m = new THREE.MeshStandardMaterial({ map: tex.map, emissive: 0xffffff, emissiveMap: lt, emissiveIntensity: 0.1, roughness: 0.75 });
       const e = { m, dayI: 0.08, nightI: 1.7, dim: 1 }; nightLit.push(e); this.windowLit.push(e); return m;
     });
     this.capMat = stdMat(new THREE.Color(this.hue).multiplyScalar(0.62).getHex());
-    this.floorGeo = new THREE.BoxGeometry(4.6, 1.0, 3.0).translate(0, 0.5, 0);
+    this.floorGeo = new THREE.BoxGeometry(HQ_W, HQ_FLOOR_H, HQ_D).translate(0, HQ_FLOOR_H / 2, 0);
     for (let i = 0; i < 2; i++) this.addFloor(true);
-    const door = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.25, 0.12), glowMat(0xffc878, 0.4, 2.2, { base: 0x1b1f30 }));
-    door.position.set(0, 0.63, 1.5); this.tower.add(door);
-    const awning = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.08, 0.6), stdMat(this.hue)); awning.position.set(0, 1.36, 1.72); awning.castShadow = true; this.tower.add(awning);
+    const door = new THREE.Mesh(new THREE.BoxGeometry(1.3, DOOR_H, 0.12), glowMat(0xffc878, 0.4, 2.2, { base: 0x1b1f30 }));
+    door.position.set(0, DOOR_H / 2, HQ_D / 2); this.tower.add(door);
+    const awning = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.1, 0.8), stdMat(this.hue)); awning.position.set(0, DOOR_H + 0.12, HQ_D / 2 + 0.38); awning.castShadow = true; this.tower.add(awning);
     this.towerStatic = [door, awning];
 
-    this.roof = new THREE.Group(); this.tower.add(this.roof);
+    this.roof = new THREE.Group(); this.roof.scale.setScalar(1.3); this.tower.add(this.roof); // built at its first size, for the bigger floors
     const slab = new THREE.Mesh(new THREE.BoxGeometry(4.9, 0.22, 3.3), this.capMat); slab.position.y = 0.11; slab.castShadow = true; slab.receiveShadow = true; this.roof.add(slab);
     this.dish = new THREE.Group(); this.dish.position.set(1.35, 0.22, -0.75); this.roof.add(this.dish);
     const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, 0.55, 8), stdMat(0xc9cedb)); stand.position.y = 0.27; this.dish.add(stand);
@@ -144,25 +147,25 @@ class District {
     const kiosk = new THREE.Group(); kiosk.position.copy(KIOSK); G.add(kiosk);
     const kb = new THREE.Mesh(new RoundedBoxGeometry(1.3, 0.95, 0.8, 2, 0.12), stdMat(0xf3ede2)); kb.position.y = 0.48; kb.castShadow = true; kiosk.add(kb);
     kiosk.add(contactShadow(1.9, 1.35, 0.1));
-    const kr = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.1, 1.05), stdMat(this.hue)); kr.position.y = 1.62; kr.castShadow = true; kiosk.add(kr);
-    for (const sx of [-0.66, 0.66]) { const p2 = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.68, 6), stdMat(0x2c3142)); p2.position.set(sx, 1.27, 0.42); kiosk.add(p2); }
+    const kr = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.1, 1.05), stdMat(this.hue)); kr.position.y = 2.5; kr.castShadow = true; kiosk.add(kr); // above a Skybot's head
+    for (const sx of [-0.66, 0.66]) { const p2 = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.55, 6), stdMat(0x2c3142)); p2.position.set(sx, 1.72, 0.42); kiosk.add(p2); }
     const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.065, 0.16, 10), stdMat(0xffffff)); cup.position.set(0.3, 1.03, 0.1); kiosk.add(cup);
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.22), glowMat(0xffb547, 0.6, 2.4, { base: 0x3a2a12 })); sign.position.set(0, 1.47, 0.53); kiosk.add(sign);
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.22), glowMat(0xffb547, 0.6, 2.4, { base: 0x3a2a12 })); sign.position.set(0, 2.33, 0.53); kiosk.add(sign);
     kiosk.rotation.y = -0.5;
     const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.95, 0.12, 32), stdMat(0x2a3044, { metalness: 0.5, roughness: 0.4 })); pad.position.copy(PAD).setY(0.12); pad.receiveShadow = true; G.add(pad);
     this.padRing = new THREE.Mesh(new THREE.TorusGeometry(0.72, 0.045, 6, 40).rotateX(Math.PI / 2), glowMat(0x6ae6f5, 0.9, 2.6, { own: true })); this.padRing.position.copy(PAD).setY(0.2); G.add(this.padRing);
-    for (const sx of [-1, 1]) { const t = makeTree(r, 0.95 + r() * 0.3); t.position.set(sx * (4.75 + r() * 0.3), 0, -5.0 - r() * 0.3); G.add(t); }
-    const bench = new THREE.Mesh(new RoundedBoxGeometry(1.5, 0.16, 0.48, 2, 0.06), stdMat(0xa8754f)); bench.position.set(4.5, 0.45, -0.8); bench.rotation.y = -1.2; bench.castShadow = true; G.add(bench);
-    const benchShadow = contactShadow(1.8, 0.75, PLAZA_TOP + 0.03, 4.5, -0.8); benchShadow.rotation.y = -1.2; G.add(benchShadow);
+    for (const sx of [-1, 1]) { const t = makeTree(r, (0.95 + r() * 0.3) * 1.2); t.position.set(sx * (5.0 + r() * 0.3), 0, -5.3 - r() * 0.3); G.add(t); }
+    const bench = new THREE.Mesh(new RoundedBoxGeometry(1.5, 0.16, 0.48, 2, 0.06), stdMat(0xa8754f)); bench.position.set(5.6, 0.45, -1.0); bench.rotation.y = -1.2; bench.castShadow = true; G.add(bench);
+    const benchShadow = contactShadow(1.8, 0.75, PLAZA_TOP + 0.03, 5.6, -1.0); benchShadow.rotation.y = -1.2; G.add(benchShadow);
 
     // street lamps on the sidewalk, trees on the outer edge, the gate
-    for (const a of [0.2, -0.2, 1.03, -1.03, 1.83, -1.83, 2.48, -2.48]) { const l = makeLamp(); l.position.set(Math.sin(a) * WALK_R, 0.12, Math.cos(a) * WALK_R); G.add(l); }
-    for (const a of [1.05, -1.05, 1.83, -1.83, 0.0]) { const t = makeTree(r, 0.8 + r() * 0.35); const rr = 10.4 + r() * 0.4; t.position.set(Math.sin(a) * rr, 0, Math.cos(a) * rr); G.add(t); }
+    for (const a of [0.2, -0.2, 1.03, -1.03, 1.83, -1.83, 2.48, -2.48]) { const l = makeLamp(); l.scale.setScalar(1.45); l.position.set(Math.sin(a) * WALK_R, 0.12, Math.cos(a) * WALK_R); G.add(l); }
+    for (const a of [1.05, -1.05, 1.83, -1.83]) { const t = makeTree(r, (0.8 + r() * 0.35) * 1.4); const rr = 14.0 + r() * 0.5; t.position.set(Math.sin(a) * rr, 0, Math.cos(a) * rr); G.add(t); }
     G.add(makeGate(this));
 
     // label above the tower
     const el = document.createElement('div'); el.className = 'dtag'; el.innerHTML = '<b></b><span></span>';
-    this.labelEl = el; this.label = new CSS2DObject(el); this.label.position.set(0, 5, -3.6); G.add(this.label);
+    this.labelEl = el; this.label = new CSS2DObject(el); this.label.position.set(0, 6, TOWER_Z); G.add(this.label);
     // picking target: the island top
     this.pickMesh = new THREE.Mesh(new THREE.CylinderGeometry(ISLAND_R, ISLAND_R, 1, 12), new THREE.MeshBasicMaterial({ visible: false }));
     this.pickMesh.userData.district = this; G.add(this.pickMesh);
@@ -199,7 +202,7 @@ class District {
     const m = new THREE.Mesh(this.floorGeo, mats);
     m.castShadow = true; m.receiveShadow = true;
     m.userData.s = instant ? 1 : 0;
-    m.position.y = i; m.scale.y = m.userData.s || 0.0001;
+    m.position.y = i * HQ_FLOOR_H; m.scale.y = m.userData.s || 0.0001;
     this.tower.add(m); this.floors.push(m);
   }
 
@@ -229,7 +232,7 @@ class District {
     const entry = { holder, body: made.group, t: instant ? 1 : 0, h: made.height };
     if (!instant) {
       made.group.scale.y = 0.001;
-      entry.crane = makeCrane(made.height); entry.crane.position.set(1.7, 0, -0.6); holder.add(entry.crane);
+      entry.crane = makeCrane(made.height); entry.crane.position.set(1.7 * BS, 0, -0.6 * BS); holder.add(entry.crane);
       const sc = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(made.w, made.height, made.depth)), new THREE.LineBasicMaterial({ color: 0xffa94d, transparent: true, opacity: 0.85 }));
       sc.position.y = made.height / 2; entry.scaffold = sc; holder.add(sc);
       sfx('build');
@@ -332,7 +335,7 @@ class District {
       this.group.position.y = lerp(-95, 0, easeOutBack(this.rise, 1.17)); // the same small bounce as before (about 5 units)
       if (this.rise >= 1) {
         ensureLoop(this.ring).addStation(this);
-        _v.copy(this.home); dustRing(_v.setY(0.3), 0xe8e0d0, 60, 4.2); sfx('land');
+        _v.copy(this.home); dustRing(_v.setY(0.3), 0xe8e0d0, 60, 6); sfx('land');
       }
     }
     if (this.leaving) {
@@ -347,12 +350,12 @@ class District {
     while (this.floors.length < this.floorTarget) { this.addFloor(false); sfx('build'); }
     let y = 0, growing = false;
     for (const f of this.floors) {
-      if (f.userData.s < 1) { growing = true; f.userData.s = Math.min(1, f.userData.s + dt / 1.4); if (f.userData.s >= 1) { _v.set(0, y + 1.2, 0); this.tower.localToWorld(_v); burstGlitter(_v, 0xffd27d, 40, 2.4); } }
-      f.position.y = y; f.scale.y = Math.max(0.0001, easeOutBack(f.userData.s)); y += f.scale.y;
+      if (f.userData.s < 1) { growing = true; f.userData.s = Math.min(1, f.userData.s + dt / 1.4); if (f.userData.s >= 1) { _v.set(0, y + HQ_FLOOR_H + 0.2, 0); this.tower.localToWorld(_v); burstGlitter(_v, 0xffd27d, 40, 2.4); } }
+      f.position.y = y; f.scale.y = Math.max(0.0001, easeOutBack(f.userData.s)); y += f.scale.y * HQ_FLOOR_H;
     }
     if (!growing && this.bakedFloors !== this.floors.length) this.bakeTower();
     this.roof.position.y = y;
-    this.label.position.y = y + 4.4;
+    this.label.position.y = y + 5.8;
     // new buildings going up
     for (const lot of this.lots) {
       if (!lot || lot.t >= 1) continue;
@@ -395,10 +398,10 @@ class District {
       // traffic on the ring road follows how busy the district is
       const wantCars = this.asleep ? 1 : clamp(1 + working, 1, 5);
       const live = this.cars.filter((c) => !c.leaving);
-      if (live.length < wantCars) { const lane = live.length % 2 ? LANE_OUT : LANE_IN; this.cars.push(new Car(this, lane, lane === LANE_IN ? 1 : -1, Math.random() * TAU)); }
+      if (live.length < wantCars) { const lane = live.length % 2 ? LANE_OUT : LANE_IN, a0 = freeLaneAngle(lane, this.cars); if (a0 !== null) this.cars.push(new Car(this, lane, lane === LANE_IN ? 1 : -1, a0)); }
       else if (live.length > wantCars) live[live.length - 1].leaving = true;
     }
-    for (const c of this.cars) c.update(dt);
+    for (const c of this.cars) c.update(dt, this.cars);
     this.cars = this.cars.filter((c) => !c.gone);
     // bots
     for (const [id, b] of this.robots) { b.update(dt); if (b.gone) { b.dispose(); this.robots.delete(id); this.updateLabel(); } }
@@ -410,7 +413,7 @@ class District {
     _v.copy(this.t).multiplyScalar(Math.cos(angle)).addScaledVector(this.side, Math.sin(angle));
     return out.copy(this.home).addScaledVector(this.n, height).addScaledVector(_v, dist);
   }
-  frameTarget(out, h = 2.6) { return out.copy(this.home).addScaledVector(this.n, h); }
+  frameTarget(out, h = 3.5) { return out.copy(this.home).addScaledVector(this.n, h); }
 
   dispose() {
     this.dead = true;
