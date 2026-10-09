@@ -402,7 +402,7 @@ def test_the_live_stream_sends_the_cards(app):
     held = ask(app)
     one_card(app)
     req = urllib.request.Request(f'http://127.0.0.1:{app.port}/events', headers={'Host': f'127.0.0.1:{app.port}'})
-    with urllib.request.urlopen(req, timeout=5) as r:
+    with urllib.request.urlopen(req, timeout=5 * SLOW) as r:
         seen, event_name = [], None
         while 'asks' not in seen:
             line = r.readline().decode().strip()
@@ -444,7 +444,7 @@ def test_a_strange_wait_header_never_strands_a_card(app):
     sock.sendall(b'POST /permission HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Length: %d\r\nX-Skyborne-Wait: \xb2\r\n\r\n' % (app.port, len(data)) + data)
     ask_id = one_card(app)['id']  # '²' counts as a digit to str.isdigit(), but not as a number: the default wait applies
     assert answer(app, ask_id, 'allow')[0] == 200
-    sock.settimeout(3)
+    sock.settimeout(3 * SLOW)  # waits for the answer to come, never for none to
     assert b'"behavior":"allow"' in sock.recv(65536)
     sock.close()
 
