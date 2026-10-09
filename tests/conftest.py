@@ -36,11 +36,12 @@ def app(tmp_path):
 
 
 def request(app, method, path, body=None, headers=None, timeout=5):
-    """(status, headers, body) for one request; error statuses are returned, not raised."""
+    """(status, headers, body) for one request; error statuses are returned, not raised. On CI the socket waits SLOW
+    times longer, so a runner stall isn't a failure; locally a hang still fails after `timeout` seconds."""
     h = {'Host': f'127.0.0.1:{app.port}', **(headers or {})}
     req = urllib.request.Request(f'http://127.0.0.1:{app.port}{path}', data=body, method=method, headers=h)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout * SLOW) as r:
             return r.status, dict(r.headers), r.read()
     except urllib.error.HTTPError as e:
         return e.code, dict(e.headers), e.read()

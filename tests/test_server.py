@@ -10,7 +10,7 @@ import time
 import urllib.request
 import warnings
 
-from conftest import payload, request, wait_until
+from conftest import SLOW, payload, request, wait_until
 
 SID = '00000000-0000-4000-8000-0000000000bb'
 
@@ -56,7 +56,7 @@ def send_raw(app, head, parts, pause=0.0):
     """Send a request by hand, waiting `pause` seconds before each body part; returns (whether the answer
     came before the whole body was sent, the whole answer)."""
     early = False
-    with socket.create_connection(('127.0.0.1', app.port), timeout=5) as s:
+    with socket.create_connection(('127.0.0.1', app.port), timeout=5 * SLOW) as s:
         s.sendall(head)
         for part in parts:
             early = early or bool(select.select([s], [], [], pause)[0])
@@ -93,7 +93,7 @@ def test_a_huge_chunk_is_dropped(app):
 def test_garbage_gets_200_fast_and_is_dropped(app):
     """Garbage must not make the hook hang. Real latency is test_50_events_a_second_fast_and_nothing_lost. On shared CI
     runners one request has stalled for 2-3 s, so there a slow answer is a warning (which names the body, and which
-    pytest prints even when the run passes) and only 4 s fails; a real hang trips request()'s own 5 s timeout."""
+    pytest prints even when the run passes) and only 4 s fails; a real hang trips request()'s own timeout (5 s, 15 s on CI)."""
     limit = 4.0 if os.environ.get('CI') else 0.5
     for body in (b'{not json', b'[1, 2]', b'\xff\xfe', b''):
         t = time.perf_counter()
@@ -144,11 +144,14 @@ def test_50_events_a_second_fast_and_nothing_lost(app):
 
 def read_sse(app, want, timeout=5, only=('state',), path='/events'):
     """The first `want` messages from /events of the given kinds, as (event, data) pairs."""
-    s = socket.create_connection(('127.0.0.1', app.port), timeout=timeout)
+    s = socket.create_connection(('127.0.0.1', app.port), timeout=timeout * SLOW)
     s.sendall(f'GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{app.port}\r\n\r\n'.encode())
-    buf, out, end = b'', [], time.monotonic() + timeout
+    buf, out, end = b'', [], time.monotonic() + timeout * SLOW  # waits for messages to come, never for none to
     while len(out) < want and time.monotonic() < end:
-        buf += s.recv(65536)
+        chunk = s.recv(65536)
+        if not chunk:  # the stream closed (the app stopped): nothing more will come
+            break
+        buf += chunk
         while b'\n\n' in buf:
             block, buf = buf.split(b'\n\n', 1)
             lines = block.decode().split('\n')
@@ -245,7 +248,7 @@ def test_restart_restores_history(tmp_path):
 def raw_get(app, path, **headers):
     """GET with the path sent exactly as written (urllib would tidy `..` away)."""
     import http.client
-    c = http.client.HTTPConnection('127.0.0.1', app.port, timeout=5)
+    c = http.client.HTTPConnection('127.0.0.1', app.port, timeout=5 * SLOW)
     c.putrequest('GET', path, skip_host=True)
     c.putheader('Host', f'127.0.0.1:{app.port}')
     for k, v in headers.items():
@@ -311,7 +314,7 @@ def test_a_listener_gets_names_then_every_session_then_ready(app):
 
 def test_the_live_stream_is_never_handed_to_another_sites_script(app):
     req = urllib.request.Request(f'http://127.0.0.1:{app.port}/events', headers={'Host': f'127.0.0.1:{app.port}'})
-    with urllib.request.urlopen(req, timeout=5) as r:
+    with urllib.request.urlopen(req, timeout=5 * SLOW) as r:
         assert r.headers['X-Content-Type-Options'] == 'nosniff'
         assert r.headers['Cross-Origin-Resource-Policy'] == 'same-origin'
 
@@ -355,7 +358,7 @@ def test_a_rename_reaches_every_listener(app):
     t.start()
     time.sleep(0.4)
     assert rename(app, {'id': SID, 'name': 'Login fixer'}, token=app.token) == 200
-    t.join(5)
+    t.join(5 * SLOW)  # as long as read_sse may wait
     assert got[-1] == ('names', {'names': {SID: 'Login fixer'}})
 
 
@@ -367,7 +370,7 @@ def test_two_listeners_both_stay_live(app):
     time.sleep(0.4)
     post(app, payload('UserPromptSubmit.json', session_id=SID, prompt='Both tabs'))
     for t in threads:
-        t.join(5)
+        t.join(5 * SLOW)
     assert all(r and r[0][1]['doc']['headline'] == 'Both tabs' for r in results)
 
 
