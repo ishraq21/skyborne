@@ -784,11 +784,31 @@ const dist = (f) => path.resolve(__dirname, '../dist', f);
   // a bot standing on the plaza (at a desk, or idling there) stands on top of it (0.12 up, plus 0.02 for its soles),
   // and its soft shadow lies on the plaza, just below its feet
   const feet = await page.evaluate(() => {
-    for (const d of window.__skyborne.city.districts.values()) for (const b of d.robots.values()) if (b.mode === 'live' && !b.walking && Math.hypot(b.pos.x, b.pos.z - 1.1) < 5.4) {
+    for (const d of window.__skyborne.city.districts.values()) for (const b of d.robots.values()) if (b.mode === 'live' && !b.walking && Math.hypot(b.pos.x, b.pos.z - 1.4) < 6.9) {
       const y = b.root.position.y; return { y: +y.toFixed(3), shadow: +(y + b.shadow.position.y * b.root.scale.y).toFixed(3) };
     }
     return null; });
   if (!feet || Math.abs(feet.y - 0.14) > 0.01 || !(feet.shadow > 0.12 && feet.shadow < feet.y)) errors.push(`Bot on the plaza: ${JSON.stringify(feet)}`);
+  // cars on one lane keep their distance: on each lane (they run opposite ways), a fast car starts close behind
+  // two slower ones and has to ease off, never coming nearer than 2.4 between middles (a car is about 2.0 long).
+  // A car on the other lane, level with them, doesn't hold them up: each lane only minds its own cars.
+  const carGap = await page.evaluate(() => {
+    const o = window.__skyborne, d = { asleep: false, group: { add() {}, remove() {} } }, TAU = 2 * Math.PI;
+    const out = {};
+    for (const [name, lane, dir, other] of [['in', o.LANE_IN, 1, o.LANE_OUT], ['out', o.LANE_OUT, -1, o.LANE_IN]]) {
+      const cars = [0, 0.3, 0.6].map((a, i) => { const c = new o.Car(d, lane, dir, a * dir); c.speed = [3.2, 2.4, 2.0][i]; return c; });
+      const across = new o.Car(d, other, -dir, 0.45 * dir); across.speed = 0; // parked, level with them, on the other lane
+      const all = [...cars, across];
+      let min = Infinity;
+      for (let k = 0; k < 600; k++) {
+        for (const c of all) c.update(0.05, all);
+        for (const c of cars) for (const e of cars) if (c !== e) { const da = Math.abs(((c.a - e.a + Math.PI) % TAU + TAU) % TAU - Math.PI); min = Math.min(min, da * c.r); }
+      }
+      out[name] = { min: +min.toFixed(2), moved: +(cars[0].a * dir / TAU).toFixed(2) };
+    }
+    return out;
+  });
+  if (Object.values(carGap).some((l) => !(l.min >= 2.4) || !(l.moved > 0.5))) errors.push(`Cars on one lane: ${JSON.stringify(carGap)}`);
   await click('#segTime [data-v="auto"]');
 
   // a recording plays in place of the city (through the file picker), then "Back to live" returns

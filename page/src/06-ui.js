@@ -722,7 +722,7 @@ function step(now) {
     if (!intro.start || DEMO?.holding) intro.start = now;  // the site holds the opening pose while its welcome shows
     intro.t = (now - intro.start) / 4200; const k = easeInOut(Math.min(1, intro.t));
     const pf = camera.aspect < 0.9 ? 1.45 : 1;
-    camera.position.set(lerp(-70, 0, k), lerp(190, 84 * pf, k), lerp(300, 112 * pf, k)); controls.target.set(0, lerp(-10, 1, k), 0);
+    camera.position.set(lerp(-98, 0, k), lerp(266, 118 * pf, k), lerp(420, 157 * pf, k)); controls.target.set(0, lerp(-10, 1, k), 0);
     if (intro.t >= 1 || performance.now() - lastInput < 50) intro.on = false;
     camera.lookAt(controls.target);
   } else updateCamera(dt);
@@ -958,7 +958,7 @@ setInterval(() => { if (askUI.size && prefs.console) tickAsks(); }, 1000);
 ensureLoop(1); buildSkyTraffic();
 window.__skyborne = { composer, mayorName, customLeadName, city, director, transit, selectDistrict, selectBot, overview, renderer, scene, camera, controls, renderTokTip, playRecording, backToLive, audioState: () => actx && actx.state,
   // for the smoke tests: the pure helpers, and the console's own drawing
-  isLive, isBusy, visibleDocs, layoutTimeline, fmtDur, detail, openDetail, closeDetail, showDocs, renderUI, drawLog, drawSteps, logRows: () => logRows };
+  isLive, isBusy, visibleDocs, layoutTimeline, fmtDur, detail, openDetail, closeDetail, showDocs, renderUI, drawLog, drawSteps, logRows: () => logRows, Car, LANE_IN, LANE_OUT };
 requestAnimationFrame(frame);
 if (DEMO) {
   // the static site: its recording plays on a loop beside the sample districts, and nothing connects to a server

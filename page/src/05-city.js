@@ -198,7 +198,7 @@ function flyTo(pos, target, dur = 1.5) {
 }
 function overview(dur = 1.6) {
   const maxRing = Math.max(1, ...[...city.districts.values()].map((d) => d.ring));
-  const dist = (96 + maxRing * 34) * (camera.aspect < 0.9 ? 1.45 : 1);
+  const dist = (134 + maxRing * 48) * (camera.aspect < 0.9 ? 1.45 : 1);
   const az = Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z);
   flyTo(new THREE.Vector3(Math.sin(az) * dist * 0.78, dist * 0.62, Math.cos(az) * dist * 0.78), new THREE.Vector3(0, 1, 0), dur);
 }
@@ -221,7 +221,7 @@ function selectDistrict(d) {
   if (selection.bot) { selection.bot.selected = false; selection.bot = null; }
   selection.district = d;
   if (d && !director.on) {
-    flyTo(d.framePos(0, 30, 19, new THREE.Vector3()), d.frameTarget(new THREE.Vector3()), 1.5);
+    flyTo(d.framePos(0, 42, 26, new THREE.Vector3()), d.frameTarget(new THREE.Vector3()), 1.5);
   }
   uiDirty = true;
 }
@@ -301,10 +301,10 @@ const director = {
     if (s.type === 'orbit') {
       this.ang += dt * 0.09;
       const maxRing = Math.max(1, ...[...city.districts.values()].map((d) => d.ring));
-      const R = 66 + maxRing * 28, H = 28 + maxRing * 12 + Math.sin(k * Math.PI) * 6;
+      const R = 92 + maxRing * 40, H = 40 + maxRing * 17 + Math.sin(k * Math.PI) * 8;
       P.set(Math.sin(this.ang) * R, H, Math.cos(this.ang) * R); T.set(0, 3, 0);
     } else if (s.type === 'district') {
-      s.d.framePos(s.a0 * 0.2 + (k - 0.5) * 0.9, 31, 14 + k * 3, P); s.d.frameTarget(T);
+      s.d.framePos(s.a0 * 0.2 + (k - 0.5) * 0.9, 43, 20 + k * 4, P); s.d.frameTarget(T);
     } else if (s.type === 'train') {
       const car = s.loop.cars[0], a = s.loop.ang;
       T.copy(car.position);
@@ -321,7 +321,7 @@ const director = {
       const e = easeInOut(clamp((k - 0.12) / 0.88, 0, 1));
       const near = _v2.clone().addScaledVector(fwd, 4.6).addScaledVector(s.bot.d.n, 1.2);
       const az = Math.atan2(fwd.x, fwd.z) + e * 1.1;
-      const far = new THREE.Vector3(Math.sin(az) * 124, 60, Math.cos(az) * 124);
+      const far = new THREE.Vector3(Math.sin(az) * 174, 84, Math.cos(az) * 174);
       P.copy(near).lerp(far, e); T.copy(_v2).lerp(new THREE.Vector3(0, 2, 0), e);
     }
     const lam = s.type === 'reveal' ? 6 : s.type === 'train' ? 3.2 : 1.8;
@@ -379,13 +379,13 @@ function updateLabels() {
   for (const d of city.districts.values()) {
     d.label.getWorldPosition(_wp);
     const dist = camera.position.distanceTo(_wp);
-    d.labelEl.style.opacity = d.leaving ? d.labelEl.style.opacity : reel ? '0' : String(clamp(1.4 - dist / 170, 0, 1));
+    d.labelEl.style.opacity = d.leaving ? d.labelEl.style.opacity : reel ? '0' : String(clamp(1.4 - dist / 240, 0, 1));
     for (const b of d.robots.values()) {
       b.root.getWorldPosition(_wp);
       const bd = camera.position.distanceTo(_wp);
       b.camDist = bd; // faces only blink and glance, and bots only have life moments, when this is small
-      const near = reel ? (b.isLead ? 18 : 12) : (b.isLead ? 36 : 24);
-      const show = b.mode !== 'beamIn' && !b.leaving && b.scale > 0.5 && (b.selected || b.hover || (prefs.labels && bd < near) || (b.data.waiting && bd < 70));
+      const near = reel ? (b.isLead ? 25 : 17) : (b.isLead ? 50 : 34);
+      const show = b.mode !== 'beamIn' && !b.leaving && b.scale > 0.5 && (b.selected || b.hover || (prefs.labels && bd < near) || (b.data.waiting && bd < 98));
       b.label.visible = show; // CSS2DRenderer owns the element's display; drive the object instead
       if (!show) continue;
       b.labelName.textContent = b.displayName();

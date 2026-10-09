@@ -88,7 +88,7 @@ function crownGeo() {
 const EYE = { working: '#8ff4ff', think: '#c6d0ff', wait: '#ffc35c', error: '#ff6b6b', done: '#9fd0ff', idle: '#8ff4ff', sleep: '#5f6b8a' };
 // faces with open eyes can blink and glance; the rest (closed, starry, X) never do
 const BLINKY = new Set(['normal', 'focus', 'up', 'wait', 'worried', 'determined', 'sweat', 'bored']);
-const NEAR_FACE = 45; // blinks, glances and life moments only for bots this close to the camera
+const NEAR_FACE = 63; // blinks, glances and life moments only for bots this close to the camera (a district's own view is about 49 away)
 const CUP_GEO = new THREE.CylinderGeometry(0.075, 0.06, 0.15, 12);
 const CUP_MAT = new THREE.MeshStandardMaterial({ color: 0xc8742e, roughness: 0.55 });
 const wrapA = (x) => ((x + Math.PI) % TAU + TAU) % TAU - Math.PI;

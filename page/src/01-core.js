@@ -126,7 +126,7 @@ stage.appendChild(labelRenderer.domElement);
 
 const scene = new THREE.Scene();
 const PC = new THREE.Vector3(0, -1e6, 0); // far below: 'away from PC' is simply up
-scene.fog = new THREE.FogExp2(0xbfd8ee, 0.0042);
+scene.fog = new THREE.FogExp2(0xbfd8ee, 0.003);
 // Soft reflections from a studio room three.js builds in code (no files, nothing downloaded), so the
 // plastic, glass and gold read like real toys. How strong they are follows the time of day (envI).
 {
@@ -135,14 +135,14 @@ scene.fog = new THREE.FogExp2(0xbfd8ee, 0.0042);
   room.dispose(); pmrem.dispose();
 }
 const camera = new THREE.PerspectiveCamera(34, 1, 0.5, 2000);
-camera.position.set(0, 62, 118);
+camera.position.set(0, 87, 165);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.07;
 controls.target.set(0, 2, 0);
 controls.minDistance = 7;
-controls.maxDistance = 260;
+controls.maxDistance = 480; // the overview of a full city on a phone stands about 470 back
 controls.maxPolarAngle = 1.32;
 controls.minPolarAngle = 0.18;
 controls.autoRotateSpeed = 0.35;
@@ -267,7 +267,7 @@ scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff0dc, 2.4);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -78; sun.shadow.camera.right = 78; sun.shadow.camera.top = 78; sun.shadow.camera.bottom = -78;
+sun.shadow.camera.left = -70; sun.shadow.camera.right = 70; sun.shadow.camera.top = 70; sun.shadow.camera.bottom = -70; // sized and placed each frame (followShadow)
 sun.shadow.camera.near = 10; sun.shadow.camera.far = 340;
 sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.04;
 scene.add(sun); scene.add(sun.target);
@@ -275,9 +275,9 @@ scene.add(sun); scene.add(sun.target);
 // Night glow is the sum of every emissive in the city: windows, lamps, screens.
 const night = { k: 0 }; // 0 day … 1 night, eased
 const PRESETS = {
-  day:    { top: 0x2f78d8, bottom: 0x9fcdf3, glow: 0xfff3dc, fog: 0xa9cff0, fogD: 0.0032, hemiS: 0xe4f1ff, hemiG: 0x7a6a58, hemiI: 1.05, envI: 0.08, sunC: 0xfff1de, sunI: 2.5, sunEl: 0.95, sunAz: 0.7, night: 0.0, exposure: 1.0, bloom: 0.42, stars: 0, cloud: 0xffffff },
-  sunset: { top: 0x3b4d8f, bottom: 0xffb38a, glow: 0xffa060, fog: 0xdaa3a0, fogD: 0.0034, hemiS: 0xffcfb0, hemiG: 0x4a4f86, hemiI: 0.85, envI: 0.09, sunC: 0xffa36a, sunI: 1.9, sunEl: 0.2, sunAz: 2.3, night: 0.45, exposure: 1.0, bloom: 0.62, stars: 0.15, cloud: 0xffe2d6 },
-  night:  { top: 0x0a1030, bottom: 0x2b3778, glow: 0x8aa0ff, fog: 0x222c62, fogD: 0.0036, hemiS: 0x95a8ff, hemiG: 0x2c2244, hemiI: 1.0, envI: 0.04, sunC: 0xbfcbff, sunI: 1.3, sunEl: 0.85, sunAz: -0.8, night: 1.0, exposure: 1.18, bloom: 0.85, stars: 1, cloud: 0x7480b8 },
+  day:    { top: 0x2f78d8, bottom: 0x9fcdf3, glow: 0xfff3dc, fog: 0xa9cff0, fogD: 0.0023, hemiS: 0xe4f1ff, hemiG: 0x7a6a58, hemiI: 1.05, envI: 0.08, sunC: 0xfff1de, sunI: 2.5, sunEl: 0.95, sunAz: 0.7, night: 0.0, exposure: 1.0, bloom: 0.42, stars: 0, cloud: 0xffffff },
+  sunset: { top: 0x3b4d8f, bottom: 0xffb38a, glow: 0xffa060, fog: 0xdaa3a0, fogD: 0.0024, hemiS: 0xffcfb0, hemiG: 0x4a4f86, hemiI: 0.85, envI: 0.09, sunC: 0xffa36a, sunI: 1.9, sunEl: 0.2, sunAz: 2.3, night: 0.45, exposure: 1.0, bloom: 0.62, stars: 0.15, cloud: 0xffe2d6 },
+  night:  { top: 0x0a1030, bottom: 0x2b3778, glow: 0x8aa0ff, fog: 0x222c62, fogD: 0.0026, hemiS: 0x95a8ff, hemiG: 0x2c2244, hemiI: 1.0, envI: 0.04, sunC: 0xbfcbff, sunI: 1.3, sunEl: 0.85, sunAz: -0.8, night: 1.0, exposure: 1.18, bloom: 0.85, stars: 1, cloud: 0x7480b8 },
 };
 function timePreset() {
   if (prefs.time !== 'auto') return prefs.time;
@@ -321,4 +321,19 @@ function updateTimeOfDay(dt) {
   if (tod.t < 1) tod.t = Math.min(1, (performance.now() - tod.startMs) / 2200);
   tod.cur = blendPresets(tod.from, PRESETS[tod.target], easeInOut(tod.t));
   applyPreset(tod.cur);
+  followShadow();
+}
+// The sun's shadows cover the part of the city the camera looks at: the shadow box follows the camera's target and
+// grows as the camera pulls back (the whole city is too big for one sharp shadow map). Its centre moves in whole
+// shadow texels across the sun's view, so shadow edges don't shimmer as it moves. applyPreset has just put the sun
+// where it shines from over the city's centre; this slides the sun and its target along together.
+const _lx = new THREE.Vector3(), _ly = new THREE.Vector3(), _lz = new THREE.Vector3(), _sunAt = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
+function followShadow() {
+  const sc = sun.shadow.camera, t = controls.target;
+  const half = clamp(Math.round(camera.position.distanceTo(t) * 0.06) * 10, 70, 130);
+  if (sc.right !== half) { sc.left = sc.bottom = -half; sc.right = sc.top = half; sc.updateProjectionMatrix(); }
+  const texel = (2 * half) / sun.shadow.mapSize.x;
+  _lz.copy(sun.position).normalize(); _lx.crossVectors(_up, _lz).normalize(); _ly.crossVectors(_lz, _lx);
+  _sunAt.copy(_lx).multiplyScalar(Math.round(t.dot(_lx) / texel) * texel).addScaledVector(_ly, Math.round(t.dot(_ly) / texel) * texel).addScaledVector(_lz, t.dot(_lz));
+  sun.target.position.copy(_sunAt); sun.position.add(_sunAt);
 }

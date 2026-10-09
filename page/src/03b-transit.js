@@ -5,7 +5,7 @@
 // =====================================================================
 const LOOP_Y = -0.9;
 function loopRadius(ring) {
-  if (ring === 1) return (12.5 + (RING1_R - ISLAND_R)) / 2;
+  if (ring === 1) return (HALL_R + (RING1_R - ISLAND_R)) / 2;
   const inner = RING1_R + (ring - 2) * RING_STEP + ISLAND_R, outer = RING1_R + (ring - 1) * RING_STEP - ISLAND_R;
   return (inner + outer) / 2;
 }
@@ -115,7 +115,7 @@ function makeHoverCar(color) {
   }
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.05, 0.03), glowMat(0xfff4d6, 1, 3)); head.position.set(0, 0, 0.66); g.add(head);
   mergeStatic(g);
-  g.scale.setScalar(1.35);
+  g.scale.setScalar(2.2); // city scale: about the size of the cars on the district roads
   return g;
 }
 function makeBlimp() {
@@ -138,7 +138,8 @@ function makeBlimp() {
   return g;
 }
 function buildSkyTraffic() {
-  const lanes = [[24, 14.5, 0.16], [40, 17, -0.11], [56, 20, 0.09], [70, 15, -0.08], [84, 24, 0.07], [30, 22, -0.14], [48, 26, 0.1]];
+  // [radius, height, turn speed]: above the tallest towers (an HQ tops out near 17)
+  const lanes = [[34, 22, 0.13], [56, 24, -0.09], [78, 27, 0.075], [98, 23, -0.065], [118, 31, 0.055], [42, 28, -0.11], [67, 33, 0.08]];
   const colors = [0xff6b6b, 0x4dabf7, 0xffd43b, 0x69db7c, 0xf783ac, 0x9775fa, 0x38d9a9];
   lanes.forEach(([R, H, w], i) => { const g = makeHoverCar(colors[i % colors.length]); scene.add(g); transit.traffic.push({ g, R, H, w, a: Math.random() * TAU, bob: Math.random() * TAU }); });
   transit.blimp = makeBlimp(); scene.add(transit.blimp);
@@ -152,9 +153,9 @@ function updateTransit(dt) {
     c.g.rotation.set(0, Math.atan2(s * Math.cos(c.a), -s * Math.sin(c.a)), -s * 0.2, 'YXZ');
   }
   if (transit.blimp) {
-    transit.blimpA += dt * 0.028;
-    const a = transit.blimpA, R = 98;
-    transit.blimp.position.set(Math.sin(a) * R, 34 + Math.sin(clockT.now * 0.3) * 1.2, Math.cos(a) * R);
+    transit.blimpA += dt * 0.02;
+    const a = transit.blimpA, R = 140;
+    transit.blimp.position.set(Math.sin(a) * R, 46 + Math.sin(clockT.now * 0.3) * 1.2, Math.cos(a) * R);
     transit.blimp.rotation.set(Math.sin(clockT.now * 0.4) * 0.03, Math.atan2(Math.cos(a), -Math.sin(a)), 0, 'YXZ');
   }
 }

@@ -8,6 +8,17 @@ notes are the version's section here.
 
 ## [Unreleased]
 
+**City scale**
+- Districts are about 1.4 times wider, with a wider two-lane road and more room between the desks. The whole city spreads out to match, and the camera's views pull back with it.
+- Cars, shops, the café, apartments, towers and each district's HQ are now sized like a real city next to the Skybots:
+  - a car is about as long as a Skybot is tall;
+  - a Skybot fits through a door;
+  - floors are taller.
+- City Hall is bigger, and the hover cars fly higher, above the tallest towers.
+- Cars on the same lane keep their distance instead of driving through each other.
+- Sun shadows now follow the camera, so they also show on districts far from City Hall.
+- A full city of 60 districts takes about a fifth fewer draw calls, so frames are smoother on most machines.
+
 **Console**
 - The console has an × in its header that hides it, at every screen size. On a phone the toolbar icon that hides the console was easy to miss.
 

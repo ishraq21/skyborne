@@ -66,6 +66,31 @@ function flipWinding(g) {
     for (let t = 0; t + 2 < attr.count; t += 3) for (let k = 0; k < s; k++) { const i1 = (t + 1) * s + k, i2 = (t + 2) * s + k, tmp = a[i1]; a[i1] = a[i2]; a[i2] = tmp; }
   }
 }
+// Plain coloured parts (no textures, no glow, opaque) that differ only in colour bake into one mesh: each
+// part's colour is painted into its vertices and they share one material per surface (roughness, metalness,
+// flat shading). Only a material whose every other setting is the default is painted, and nothing changes these
+// materials after they're made (a material changed at run time must not be baked: flag its mesh userData.keep).
+const paintCache = new Map();
+function paintable(m) {
+  return m.type === 'MeshStandardMaterial' && !m.vertexColors && !m.map && !m.emissiveMap && !m.alphaMap && !m.normalMap && !m.bumpMap && !m.roughnessMap
+    && !m.metalnessMap && !m.aoMap && !m.lightMap && !m.envMap && m.emissive.getHex() === 0 && !m.transparent && m.opacity === 1 && m.side === THREE.FrontSide
+    && !m.displacementMap && !m.alphaTest && m.fog && m.toneMapped && !m.clippingPlanes && m.colorWrite && !m.dithering && !m.premultipliedAlpha
+    && m.onBeforeCompile === THREE.Material.prototype.onBeforeCompile && Object.keys(m.defines || {}).every((k) => k === 'STANDARD')
+    && m.blending === THREE.NormalBlending && m.depthTest && m.depthWrite && !m.polygonOffset && !m.wireframe && m.visible && m.envMapIntensity === 1;
+}
+function paintMat(m) {
+  const key = [m.roughness, m.metalness, m.flatShading].join('|');
+  if (!paintCache.has(key)) {
+    const p = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: m.roughness, metalness: m.metalness, flatShading: m.flatShading });
+    p.name = 'painted'; paintCache.set(key, p);
+  }
+  return paintCache.get(key);
+}
+function paintGeoColour(g, c) {
+  const n = g.attributes.position.count, a = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { a[i * 3] = c.r; a[i * 3 + 1] = c.g; a[i * 3 + 2] = c.b; }
+  g.setAttribute('color', new THREE.BufferAttribute(a, 3));
+}
 // items: [mesh, matrix relative to where the baked group will sit]
 function bakeItems(items) {
   const buckets = new Map();
@@ -76,10 +101,11 @@ function bakeItems(items) {
     const multi = Array.isArray(o.material), total = g.attributes.position.count;
     const parts = multi && g.groups.length ? g.groups : [{ start: 0, count: total, materialIndex: 0 }];
     for (const grp of parts) {
-      const mat = multi ? o.material[grp.materialIndex] : o.material;
+      let mat = multi ? o.material[grp.materialIndex] : o.material;
       const count = Math.min(grp.count, total - grp.start);
       if (!mat || count <= 0) continue;
       const sub = grp.start === 0 && count === total ? g : sliceGeo(g, grp.start, count);
+      if (paintable(mat)) { paintGeoColour(sub, mat.color); mat = paintMat(mat); }
       const key = mat.uuid + (o.castShadow ? ':c' : '') + (o.receiveShadow ? ':r' : '');
       let b = buckets.get(key); if (!b) buckets.set(key, b = { mat, cast: o.castShadow, recv: o.receiveShadow, geos: [] });
       b.geos.push(sub);
@@ -87,7 +113,7 @@ function bakeItems(items) {
   }
   const out = new THREE.Group();
   for (const b of buckets.values()) {
-    const uv = b.geos.some((g) => g.attributes.uv);
+    const uv = b.mat.name !== 'painted' && b.geos.some((g) => g.attributes.uv);
     for (const g of b.geos) bakeReady(g, b.mat, uv);
     const geo = b.geos.length === 1 ? b.geos[0] : mergeGeometries(b.geos, false);
     if (!geo) continue;
@@ -440,8 +466,8 @@ const clouds = [];
     }
     const m = puffCloud(puffs, r);
     const below = i < 14;
-    const R = below ? 12 + r() * 150 : 120 + r() * 110, a = r() * TAU;
-    m.position.set(Math.cos(a) * R, below ? -24 - r() * 22 : 26 + r() * 22, Math.sin(a) * R);
+    const R = below ? 17 + r() * 210 : 170 + r() * 155, a = r() * TAU;
+    m.position.set(Math.cos(a) * R, below ? -24 - r() * 22 : 40 + r() * 24, Math.sin(a) * R); // the high ones above the sky traffic
     m.rotation.y = r() * TAU;
     m.userData.a = a; m.userData.R = R; m.userData.speed = (0.004 + r() * 0.006) * (r() > .5 ? 1 : -1); m.userData.bob = r() * TAU;
     scene.add(m); clouds.push(m);
@@ -509,7 +535,7 @@ function updateClouds(dt) {
   cloudShade.value.copy(cloudLit.value).multiply(SHADE_TINT);
   seaLit.value.copy(cloudLit.value).multiply(SEA_TINT); seaShade.value.copy(seaLit.value).multiply(SHADE_TINT);
   SEA_MAT.uniforms.uTime.value = clockT.now % 10000; // wraps seamlessly (each drift goes a whole number of repeats in 10,000 s), so it never loses precision
-  seaSun.value.set(sun.position.x, sun.position.z).normalize();
+  seaSun.value.set(sun.position.x - sun.target.position.x, sun.position.z - sun.target.position.z).normalize(); // the sun follows the camera (followShadow): its direction doesn't
   cloudSea.rotation.y += dt * 0.002;
   for (const c of clouds) {
     const u = c.userData; u.a += u.speed * dt;
@@ -686,6 +712,8 @@ function makeIslandBase(R, seed) {
 // =====================================================================
 // City Hall: the Mayor's island at the center of the city
 // =====================================================================
+// City Hall is built at its first size and drawn 1.4x bigger (HALL_SCALE), in step with the districts around it
+const HALL_SCALE = 1.4, HALL_R = 12.5 * HALL_SCALE;
 const hall = { group: new THREE.Group(), beaconMat: null, beacon: null, ring: null, ringTex: null, flag: null, flagGeo: null, fountain: null, label: null, waitPulse: 0, dome: null };
 function drawRing(text) {
   const t = hall.ringTex, g = t.userData.ctx, c = t.userData.canvas;
@@ -761,7 +789,7 @@ function drawRing(text) {
   const water = new THREE.Mesh(new THREE.CylinderGeometry(1.42, 1.42, 0.06, 28), new THREE.MeshStandardMaterial({ color: 0x7fd3f0, emissive: 0x2a7ab8, emissiveIntensity: 0.5, roughness: 0.1, metalness: 0.2 }));
   water.position.set(0, 0.68, 8.2); H.add(water);
   const spout = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.18, 1.1, 10), stdMat(0xf2ede2)); spout.position.set(0, 1.0, 8.2); H.add(spout);
-  hall.fountain = new THREE.Vector3(0, 1.6, 8.2);
+  hall.fountain = new THREE.Vector3(0, 1.6, 8.2).multiplyScalar(HALL_SCALE); // in the world: where the water leaves the spout
   // lamps and trees around the plaza
   for (let i = 0; i < 6; i++) { const a = (i / 6) * TAU + 0.26; const l = makeLamp(0.03); l.position.set(Math.cos(a) * 8.6, 0.2, Math.sin(a) * 8.6); H.add(l); }
   const r = rng(5);
@@ -771,9 +799,10 @@ function drawRing(text) {
   hall.label = new CSS2DObject(el); hall.label.position.set(0, baseY + 10.6, 0); H.add(hall.label);
   hall.flag.userData.keep = true; hall.ring.userData.keep = true;
   mergeStatic(H);
+  H.scale.setScalar(HALL_SCALE);
   scene.add(H);
 })();
-const hallTop = new THREE.Vector3(0, 9.6, 0);
+const hallTop = new THREE.Vector3(0, 9.6 * HALL_SCALE, 0);
 function updateHall(dt, waitingCount) {
   // waving flag
   const pos = hall.flagGeo.attributes.position, base = hall.flagGeo.userData.base, t = clockT.now;
@@ -793,7 +822,7 @@ function updateHall(dt, waitingCount) {
   hall.dome.material.emissiveIntensity = 0.2 + hall.waitPulse * pulse * 0.8;
   // fountain
   for (let i = 0; i < 3; i++) {
-    const a = Math.random() * TAU, s = 0.3 + Math.random() * 0.5;
-    puffs.emit({ x: hall.fountain.x, y: hall.fountain.y, z: hall.fountain.z, vx: Math.cos(a) * s, vy: 3.2 + Math.random(), vz: Math.sin(a) * s, life: 0.9, size: 0.16, size1: 0.1, alpha: 0.75, color: night.k > 0.6 ? 0x9fd8ff : 0xd8f3ff, gravity: 7.5 });
+    const a = Math.random() * TAU, s = (0.3 + Math.random() * 0.5) * HALL_SCALE;  // a jet in proportion to the bigger fountain (height goes with speed squared)
+    puffs.emit({ x: hall.fountain.x, y: hall.fountain.y, z: hall.fountain.z, vx: Math.cos(a) * s, vy: (3.2 + Math.random()) * Math.sqrt(HALL_SCALE), vz: Math.sin(a) * s, life: 0.9, size: 0.16 * HALL_SCALE, size1: 0.1 * HALL_SCALE, alpha: 0.75, color: night.k > 0.6 ? 0x9fd8ff : 0xd8f3ff, gravity: 7.5 });
   }
 }
