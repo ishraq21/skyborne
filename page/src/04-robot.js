@@ -107,9 +107,14 @@ class Robot {
     this.build();
     this.pos = new THREE.Vector3();
     this.heading = 0;
+    // a helper's own house, while one is free: it steps out of it to work and walks back in when it's done (doorIn,
+    // homeIn, home). leaveT: how long it's been walking home to leave
+    this.house = this.isLead ? null : district.claimHome(this); this.doorT = 0; this.leaveT = 0;
     if (!city.primed || district.rise < 1) { this.mode = 'live'; this.scale = 1; this.snap = true; }
     else if (this.isLead) { this.pos.copy(DOOR); this.mode = 'live'; this.heading = 0; this.scale = 1; }
-    else {
+    else if (this.house && a.status === 'done') { this.mode = 'home'; this.scale = 0; this.pos.set(this.house.inside.x, 0, this.house.inside.z); district.lightHome(this.house, true); } // first seen done: home already
+    else if (this.house) { this.stepOut(); sfx('spawn'); queueMicrotask(() => cityEvent('spawn', this)); }
+    else { // every house taken: it beams in at the pad
       const at = district.arrivalPoint(); this.pos.set(at.x, 0, at.z); // the pad, or beside it while another bot stands there
       this.mode = 'beamIn'; this.scale = 0;
       this.beam = makeBeam(0x6ae6f5); this.beam.position.copy(this.pos).setY(0.15); this.beam.scale.set(0.75, 9, 0.75); district.group.add(this.beam);
@@ -269,23 +274,38 @@ class Robot {
     _v.set(0, 0.8, 0.4); this.bob.localToWorld(_v); burstGlitter(_v, 0x6ae6f5, 36, 2);
   }
 
+  // The lead goes into the HQ. A helper at home is gone; one with a house walks home (goalFor) and goes in, or beams out
+  // if that takes more than 25 s (the longest walk home is about 10 s); one without beams out where it stands.
   leave() {
     this.leaving = true; this.t = 0; this.moment = null; this.lookAt = null;
     this.d.releaseDesk(this); this.d.releaseSpots(this);
     this.clearArc(); this.clearTether();
     if (this.isLead) { this.mode = 'doorOut'; }
-    else {
-      this.mode = 'beamOut';
-      if (!this.beam) { this.beam = makeBeam(0x6ae6f5); this.d.group.add(this.beam); }
-      this.beam.position.copy(this.pos).setY(0.15); this.beam.scale.set(0.7, 9, 0.7);
-      sfx('leave');
-    }
+    else if (this.mode === 'home') { this.gone = true; }
+    else if (this.house && this.mode !== 'beamIn') { this.leaveT = 0; }
+    else this.beamOut();
   }
+  beamOut() {
+    this.mode = 'beamOut'; this.t = 0;
+    if (!this.beam) { this.beam = makeBeam(0x6ae6f5); this.d.group.add(this.beam); }
+    this.beam.position.copy(this.pos).setY(0.15); this.beam.scale.set(0.7, 9, 0.7);
+    sfx('leave');
+  }
+  // out of its front door: it grows in the doorway and steps out onto its step
+  stepOut() {
+    const h = this.house;
+    this.mode = 'doorIn'; this.doorT = 0; this.scale = 0; this.fromHome = true;
+    this.pos.set(h.inside.x, 0, h.inside.z); this.heading = h.step.face + Math.PI;
+    this.d.openDoor(h, true);
+  }
+  // its front step, where it turns to go in
+  homeGoal() { const s = this.house.step; return { x: s.x, z: s.z, face: s.face, enter: true }; }
 
   goalFor() {
     const a = this.data;
     if (this.mode === 'doorOut') return { x: DOOR.x, z: DOOR.z, face: Math.PI };
-    if (this.d.asleep) return null; // asleep districts stay put
+    if (this.leaving && this.house) return this.homeGoal();
+    if (this.d.asleep && !this.snap) return null; // asleep districts stay put (once their bots are in place)
     if (this.moment?.hold) return this.goal || { x: this.pos.x, z: this.pos.z, face: this.heading }; // stay put for a salute, high-five or wave
     // every place it's sent is its own (a desk, a spot, a place around the lead), so no two bots stand in one place
     if (this.delivering) {
@@ -297,6 +317,7 @@ class Robot {
     }
     if (!this.isLead && a.status === 'done') {
       this.d.releaseDesk(this);
+      if (this.house) { this.d.releaseSpots(this); return this.homeGoal(); } // done: home
       const s = this.d.claimSpot(this, 'pad');
       return s ? { x: s.x, z: s.z, face: s.face } : this.spareGoal();
     }
@@ -315,7 +336,7 @@ class Robot {
     return s ? { x: s.x, z: s.z, face: s.face } : { x: this.pos.x, z: this.pos.z, face: this.heading };
   }
   // in the way of other bots: standing or walking in the district (not one fading in or out)
-  solid() { return !this.gone && (this.mode === 'live' || this.mode === 'doorOut' || this.mode === 'beamIn') && this.scale > 0.3; }
+  solid() { return !this.gone && this.mode !== 'beamOut' && this.mode !== 'home' && this.scale > 0.3; }
   // One step toward g along its path (walkPath): around desks, buildings, trees and the bots standing about, aside for
   // a bot just ahead (both keep to their right, or step left when the right is blocked), and never into another bot
   // (only walking bots give way: one standing stays put). Returns whether the bot is walking. A bot that gets no
@@ -382,6 +403,9 @@ class Robot {
         break;
       }
     }
+    // at the kerb while a car is on the zebra crossing: it waits, looking about, until the car is across (cars stop for
+    // a bot that's crossing or about to, so one that's on the crossing is soon over it)
+    if (d.carOnCross && !onCrossing(this.pos.x, this.pos.z, BOT_R) && onCrossing(nx, nz, BOT_R)) { this.stuckT = 0; return true; }
     const went = Math.hypot(nx - this.pos.x, nz - this.pos.z), near = this.near, dw = Math.hypot(wp.x - nx, wp.z - nz);
     if (Math.hypot(wp.x - near.x, wp.z - near.z) > 0.01) { near.x = wp.x; near.z = wp.z; near.d = Infinity; } // a new waypoint
     if (dw < near.d - 0.05) { near.d = dw; this.stuckT = 0; } else this.stuckT += dt;
@@ -421,24 +445,53 @@ class Robot {
       this.scale = clamp(1 - (k - 0.35) / 0.5, 0, 1);
       if (k > 0.5 && !this._outFlash) { this._outFlash = true; _v.copy(this.pos).setY(0.9); this.d.group.localToWorld(_v); burstGlitter(_v, 0x6ae6f5, 50, 2.5); }
       if (k > 1.5) { this.gone = true; return; }
+    } else if (this.mode === 'doorIn' || this.mode === 'homeIn') {
+      // through its front door: out (growing in the doorway, onto its step) or in (shrinking into the doorway)
+      const h = this.house, out = this.mode === 'doorIn', k = clamp((this.doorT += dt) / 0.9, 0, 1);
+      const from = out ? h.inside : h.step, to = out ? h.step : h.inside;
+      this.pos.x = from.x + (to.x - from.x) * k; this.pos.z = from.z + (to.z - from.z) * k;
+      this.scale = out ? clamp(k / 0.5, 0, 1) : clamp((1 - k) / 0.5, 0, 1);
+      this.heading = angleDamp(this.heading, out ? h.step.face + Math.PI : h.step.face, 10, dt);
+      this.stepT = 0.25;
+      if (k >= 1) {
+        this.d.openDoor(h, false);
+        if (out) {
+          this.mode = 'live'; this.scale = 1;
+          // out: a quick salute, and the lead waves hello if it's free
+          this.startMoment('salute', 1.3, { hold: true });
+          const lead = this.d.lead(); if (lead && lead !== this && lead.free()) lead.startMoment('wave', 1.8, { hold: true, other: this });
+        } else if (this.leaving) { this.gone = true; return; }
+        else { this.mode = 'home'; this.scale = 0; this.d.lightHome(h, true); }
+      }
+    } else if (this.mode === 'home' && a.status !== 'done' && !this.d.asleep) {
+      this.d.lightHome(this.house, false); this.stepOut(); // back to work
     }
+    // a helper walking home to leave that takes far too long (held up for good) beams out instead
+    if (this.leaving && this.mode === 'live' && !this.isLead && (this.leaveT += dt) > 25) this.beamOut();
     // movement
-    let walking = false;
+    let walking = this.mode === 'doorIn' || this.mode === 'homeIn';
     if (this.mode === 'live' || this.mode === 'doorOut') {
       this.goal = this.goalFor();
-      if (this.goal && this.snap) { this.pos.set(this.goal.x, 0, this.goal.z); this.heading = this.goal.face ?? 0; this.groundY = groundAt(this.pos.x, this.pos.z); }
+      if (this.goal?.enter && this.snap) { // a past or just-loaded session: a finished helper is already home
+        this.mode = 'home'; this.scale = 0; this.pos.set(this.house.inside.x, 0, this.house.inside.z); this.d.lightHome(this.house, true); this.goal = null;
+      } else if (this.goal && this.snap) { this.pos.set(this.goal.x, 0, this.goal.z); this.heading = this.goal.face ?? 0; this.groundY = groundAt(this.pos.x, this.pos.z); }
       this.snap = false;
       if (this.goal) {
-        if (Math.hypot(this.goal.x - this.pos.x, this.goal.z - this.pos.z) > 0.06) walking = this.walkToward(this.goal, this.delivering ? 2.1 : 1.7, dt);
+        // to and from home it walks at a commuter's pace
+        const speed = this.delivering ? 2.1 : this.goal.enter || this.fromHome ? 2.4 : 1.7;
+        if (Math.hypot(this.goal.x - this.pos.x, this.goal.z - this.pos.z) > 0.06) walking = this.walkToward(this.goal, speed, dt);
         else {
           this.path = null; this.pathTo = null; this.stuckT = 0;
+          if (!this.moment?.hold) this.fromHome = false; // (there: not just standing still for a salute)
           this.heading = angleDamp(this.heading, this.goal.face ?? this.heading, 7, dt);
           if (this.goal.deliver && this.delivering) this.finishDelivery();
           if (this.mode === 'doorOut') { this.gone = true; return; }
+          if (this.goal.enter && !this.moment?.hold) { this.mode = 'homeIn'; this.doorT = 0; this.d.openDoor(this.house, true); walking = true; }
         }
       }
     }
     this.walking = walking;
+    this.root.visible = this.mode !== 'home'; // inside: not drawn
     if (this.moment && walking && !this.moment.hold) this.moment = null;
     this.atDesk = !walking && !!this.goal?.desk && this.mode === 'live' && Math.hypot(this.goal.x - this.pos.x, this.goal.z - this.pos.z) <= 0.06; // there, not waiting on the way
     // stand on the plaza, the pad or the grass, stepping up and down smoothly
@@ -446,14 +499,11 @@ class Robot {
     this.root.position.copy(this.pos).setY(this.groundY + BOT_FEET);
     this.root.rotation.y = this.heading;
     this.root.scale.setScalar(Math.max(0.001, this.scale) * BOT_SCALE);
-    // desk screen shows what the bot is doing
-    if (this.desk) {
-      const show = this.desk.occupant === this;
-      this.desk.screen.visible = show && this.atDesk && !this.d.asleep;
-      if (show) {
-        const sk = a.waiting ? 'wait' : a.status === 'error' ? 'error' : a.status === 'done' ? 'done' : (SCREEN_KIND[a.kind] || 'think');
-        this.desk.screen.material = screenMats[sk];
-      }
+    // desk screen shows what the bot is doing (only its own desk's: one it has left may be someone else's now)
+    if (this.desk && this.desk.occupant === this) {
+      this.desk.screen.visible = this.atDesk && !this.d.asleep;
+      const sk = a.waiting ? 'wait' : a.status === 'error' ? 'error' : a.status === 'done' ? 'done' : (SCREEN_KIND[a.kind] || 'think');
+      this.desk.screen.material = screenMats[sk];
     }
     this.planMoment(dt);
     this.animate(dt);
@@ -779,7 +829,7 @@ class Robot {
     this.clearArc(); this.clearTether();
     if (this.beam) disposeMesh(this.beam);
     if (this.carry) this.bob.remove(this.carry);
-    this.d.releaseDesk(this); this.d.releaseSpots(this);
+    this.d.releaseDesk(this); this.d.releaseSpots(this); this.d.releaseHome(this);
     this.root.remove(this.label); this.labelEl.remove();
     this.d.group.remove(this.root);
     this.faceTex.dispose(); this.faceMat.dispose(); this.bodyMat.dispose(); this.tipMat.dispose();

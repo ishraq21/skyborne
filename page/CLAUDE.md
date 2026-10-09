@@ -50,7 +50,7 @@ The local server serves it at `/` and feeds it through `/events` (docs/EVENT_FOR
   "Follow on X", a GitHub button to the repo) and the reel's watermark (credit left, skyborne.dev right); not the loading screen.
 - Districts are real sessions only (an off-by-default "Sample districts" setting exists). The city's UI text never
   says "demo" (the demo site is a separate build).
-- Districts grow: park, café, shops, apartments, towers. Transit: monorail, hover cars, blimp (no
+- Districts grow: park, café, shops, apartments, towers; six helper homes stand by a zebra crossing. Transit: monorail, hover cars, blimp (no
   sky bridges, trams or drones: too cluttered). Reel mode (R) is 9:16; "Safe to film" (S) hides prompts, files and names.
 - UI text: every sentence, label and " · " fragment starts with a capital. Folder names and commands stay as written.
 - Chrome is "Skyborne milk": milky panels #F4F3EF, graphite #1B1D22, one amber accent #E8A54B (#9A5B0C for

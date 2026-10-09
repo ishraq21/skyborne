@@ -968,7 +968,9 @@ window.__skyborne = { composer, mayorName, customLeadName, city, director, trans
   // for the smoke tests: the pure helpers, and the console's own drawing
   isLive, isBusy, visibleDocs, layoutTimeline, fmtDur, detail, openDetail, closeDetail, showDocs, renderUI, drawLog, drawSteps, logRows: () => logRows, Car, LANE_IN, LANE_OUT,
   // the walk map and a city run without drawing (simulate), fed by a source the test drives (useSource)
-  useSource, simulate, walkable, walkCell, walkPath, walkShapes, shapeDist, SPOT_PLACES, FAN, DESKS, BOT_R };
+  useSource, simulate, walkable, walkCell, walkPath, walkShapes, shapeDist, SPOT_PLACES, FAN, DESKS, BOT_R,
+  // the home row and the zebra crossing
+  HOMES, ROAD_IN, ROAD_OUT, CROSS_W, CROSS_EDGE, CAR_HALF };
 requestAnimationFrame(frame);
 if (DEMO) {
   // the static site: its recording plays on a loop beside the sample districts, and nothing connects to a server

@@ -1706,21 +1706,82 @@ const ROAD_IN = 9.0, ROAD_OUT = 11.6, LANE_IN = 9.65, LANE_OUT = 10.95, WALK_R =
 const FLOOR_H = 1.6, GROUND_H = 2.8, DOOR_H = 2.4, DOOR_W = 1.3, BS = 1.3; // a Skybot is about 1.25 across its hands
 // Building lots around the ring road, in the order a district grows into them.
 // a = angle from the district's front (local +z, away from City Hall) toward +x.
+// (the home row holds the front, between the park and the café)
 const LOTS = [
-  { a: 0.62, type: 'park' },
-  { a: -0.62, type: 'cafe' },
-  { a: -1.45, type: 'apartment' },
-  { a: 1.45, type: 'shop' },
-  { a: -2.2, type: 'tower' },
-  { a: 2.2, type: 'tower' },
-  { a: 2.75, type: 'apartment' },
-  { a: -2.75, type: 'shop' },
+  { a: 0.84, type: 'park' },
+  { a: -0.84, type: 'cafe' },
+  { a: -1.4, type: 'apartment' },
+  { a: 1.4, type: 'shop' },
+  { a: -2.05, type: 'tower' },
+  { a: 2.05, type: 'tower' },
+  { a: 2.6, type: 'apartment' },
+  { a: -2.6, type: 'shop' },
 ];
+
+// The home row: six cottages at the island's front, just past the road, one for each helper desk. Their doors face
+// out, to the island's edge (and the camera's usual view of a district). A helper steps out of its own front door when
+// it starts, walks along the path by the edge to the gap between the two middle cottages, crosses the road at the zebra
+// crossing (angle 0, CROSS_W wide, in line with the gap) and walks home the same way when it's done; its front window
+// lights while it's in. The path (out to HOME_SPAN either side, inside RIM_WALK) is wide enough for two bots to pass.
+// Each house: its angle, where a bot stands on its step, where it goes in, and its door's middle across it (doorX).
+const HOME_R = 12.55, HOME_W = 2.2, HOME_D = 1.3, HOME_WALL = 3.1, HOME_SPAN = 0.6, RIM_WALK = 14.8, CROSS_W = 2.2;
+// cars stop with their fronts this far from the crossing's middle (just short of its stripes) while a bot is crossing
+const CROSS_EDGE = CROSS_W / 2 + 0.15;
+const HOME_COLORS = [0xf4c7a1, 0xbfdcf0, 0xf2e2a6, 0xc9e7c4, 0xf1c4d4, 0xd7cdf0];
+// a point in a house's own frame (x across its front, z out of its front toward the island's edge) in district space
+const houseAt = (a, lx, lz) => ({ x: Math.sin(a) * HOME_R + Math.cos(a) * lx + Math.sin(a) * lz, z: Math.cos(a) * HOME_R - Math.sin(a) * lx + Math.cos(a) * lz });
+// (nearest the crossing first: a new helper takes the first free one)
+const HOMES = [0.2, -0.2, 0.39, -0.39, 0.58, -0.58].map((a, i) => {
+  const doorX = -0.35, step = houseAt(a, doorX, HOME_D / 2 + 0.45), inside = houseAt(a, doorX, HOME_D / 2 - 0.35);
+  return { i, a, doorX, step: { ...step, face: Math.atan2(inside.x - step.x, inside.z - step.z) }, inside };
+});
+// a house's still parts: walls, roof, chimney, step, sill and back windows (its door and front window are in the
+// district's home lights, which change)
+function buildHouse(i) {
+  const g = new THREE.Group(), wall = HOME_COLORS[i % HOME_COLORS.length], H = HOME_WALL, front = HOME_D / 2;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(HOME_W, H, HOME_D), stdMat(wall)); body.position.y = H / 2; body.castShadow = true; body.receiveShadow = true; g.add(body);
+  const shape = new THREE.Shape(); shape.moveTo(-front - 0.18, 0); shape.lineTo(front + 0.18, 0); shape.lineTo(0, 1.3); shape.closePath();
+  const roofGeo = new THREE.ExtrudeGeometry(shape, { depth: HOME_W + 0.16, bevelEnabled: false }).translate(0, 0, -(HOME_W + 0.16) / 2).rotateY(Math.PI / 2);
+  const roof = new THREE.Mesh(roofGeo, stdMat(shiftHue(wall, 0.02, -0.25, -0.38))); roof.position.y = H; roof.castShadow = true; g.add(roof);
+  const chim = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.7, 0.3), stdMat(0x8e8a9c)); chim.position.set(0.65, H + 0.75, -0.2); chim.castShadow = true; g.add(chim);
+  const stepGeo = new THREE.BoxGeometry(DOOR_W + 0.3, 0.1, 0.35), stepMesh = new THREE.Mesh(stepGeo, stdMat(PAVE_DARK)); stepMesh.position.set(HOMES[i].doorX, 0.05, front + 0.17); g.add(stepMesh);
+  const sill = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.06, 0.12), stdMat(0xf4f3ef)); sill.position.set(0.68, 0.87, front + 0.05); g.add(sill);
+  for (const x of [-0.5, 0.5]) { const w = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.8), stdMat(0x2a3048)); w.position.set(x, 1.7, -front - 0.01); w.rotation.y = Math.PI; g.add(w); }
+  return g;
+}
+// the doors and front windows of a district's six houses, as one mesh it repaints: a door takes its resident's
+// colour (dark while it stands open), and a window lights through its own texel of the glow map while someone's home
+const HOME_GLOW = [255, 217, 160];
+function makeHomeLights() {
+  const parts = [], doors = [];
+  const add = (geo, i, lx, ly, lz, color, texel) => {
+    const g = geo.clone().toNonIndexed(), h = HOMES[i], m = new THREE.Matrix4().makeRotationY(h.a);
+    const at = houseAt(h.a, 0, 0); m.setPosition(at.x, 0, at.z);
+    g.translate(lx, ly, lz).applyMatrix4(m);
+    const n = g.attributes.position.count, col = new Float32Array(n * 3), uv = new Float32Array(n * 2), c = new THREE.Color(color);
+    for (let k = 0; k < n; k++) { col.set([c.r, c.g, c.b], k * 3); uv.set([(texel + 0.5) / 8, 0.5], k * 2); }
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'color', 'uv'].includes(k)) g.deleteAttribute(k);
+    return g;
+  };
+  let start = 0;
+  for (const h of HOMES) {
+    const door = add(new THREE.BoxGeometry(DOOR_W, DOOR_H, 0.06), h.i, h.doorX, DOOR_H / 2, HOME_D / 2 + 0.03, DOOR_IDLE, 7);
+    doors.push({ start, count: door.attributes.position.count }); start += door.attributes.position.count; parts.push(door);
+  }
+  for (const h of HOMES) parts.push(add(new THREE.PlaneGeometry(0.6, 0.95), h.i, 0.68, 1.4, HOME_D / 2 + 0.01, 0x23304a, h.i));
+  const geo = mergeGeometries(parts, false); parts.forEach((g) => g.dispose());
+  const glow = new THREE.DataTexture(new Uint8Array(8 * 4), 8, 1); glow.magFilter = glow.minFilter = THREE.NearestFilter; glow.colorSpace = THREE.SRGBColorSpace; glow.needsUpdate = true; // (lit like the facades' windows)
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, emissive: 0xffffff, emissiveMap: glow, emissiveIntensity: 0.6 });
+  const mesh = new THREE.Mesh(geo, mat); mesh.receiveShadow = true; mesh.userData.keep = true;
+  return { mesh, glow, doors };
+}
+const DOOR_IDLE = 0x8a6a52, DOOR_OPEN = 0x15161c;
 // development points a district needs before each lot gets built (see District.develop)
 const LOT_STEPS = [0, 5, 12, 22, 34, 50, 70, 95];
 const ASPHALT = 0x3b4152, CURB = 0xddd6c6;
 // where idle bots hang about on the plaza (District.claimSpot gives each to one bot at a time)
-const IDLE_SPOTS = [[6.6, -1.25], [2.9, -1.8], [-5.4, 5.6], [4.6, 6.25], [-7.1, 1.75], [0.75, 7.6], [-3.0, -2.0]];
+const IDLE_SPOTS = [[6.6, -1.25], [2.9, -1.8], [-5.4, 5.6], [4.6, 6.25], [-7.1, 1.75], [-2.6, 7.0], [-3.0, -2.0]]; // (none at the crossing's foot)
 
 function makeRoadRing() {
   const g = new THREE.Group();
@@ -1732,9 +1793,20 @@ function makeRoadRing() {
   const dashes = [];
   for (let i = 0; i < 48; i++) {
     const a = (i / 48) * TAU, r = (ROAD_IN + ROAD_OUT) / 2;
+    if (Math.abs(wrapA(a)) * r < CROSS_W / 2 + 0.4) continue; // none over the zebra crossing
     dashes.push(new THREE.BoxGeometry(0.75, 0.02, 0.1).rotateY(a).translate(Math.sin(a) * r, 0.125, Math.cos(a) * r));
   }
   const dm = new THREE.Mesh(mergeGeometries(dashes), stdMat(0xf5e6a8)); dashes.forEach((d) => d.dispose()); g.add(dm);
+  // the zebra crossing at the front (angle 0): white stripes across the road, between the plaza and the home row
+  const zebra = [];
+  for (let r = ROAD_IN + 0.2; r < ROAD_OUT - 0.1; r += 0.5) zebra.push(new THREE.BoxGeometry(CROSS_W, 0.02, 0.28).translate(0, 0.124, r + 0.14));
+  const zm = new THREE.Mesh(mergeGeometries(zebra), stdMat(0xf4f3ef)); zebra.forEach((z) => z.dispose()); g.add(zm);
+  // the home row's paving: the path along the island's edge in front of the cottage doors, and through the gap between
+  // the middle cottages to the sidewalk (a ring's angle t runs from +x toward -z, so a district angle a is t = a - PI/2)
+  const edge = new THREE.Mesh(new THREE.RingGeometry(HOME_R + HOME_D / 2, RIM_WALK + 0.05, 40, 1, -HOME_SPAN - 0.05 - Math.PI / 2, 2 * HOME_SPAN + 0.1).rotateX(-Math.PI / 2), stdMat(PAVE));
+  edge.position.y = 0.12; edge.receiveShadow = true; g.add(edge);
+  const gap = new THREE.Mesh(new THREE.PlaneGeometry(CROSS_W - 0.4, HOME_R + HOME_D / 2 - ROAD_OUT - 0.6).rotateX(-Math.PI / 2), stdMat(PAVE));
+  gap.position.set(0, 0.12, (HOME_R + HOME_D / 2 + ROAD_OUT + 0.6) / 2); gap.receiveShadow = true; g.add(gap);
   return g;
 }
 
@@ -1763,7 +1835,7 @@ function makeCar(color) {
 // A car is built at its first size and drawn CAR_SCALE bigger: about as long as a Skybot is tall (2.0).
 // Each lane runs one way; a car eases off to keep its distance from the car ahead (CAR_GAP between their
 // middles) and stops before it would touch it (CAR_STOP), so cars never pass through each other.
-const CAR_SCALE = 2.2, CAR_GAP = 5.2, CAR_STOP = 2.6;
+const CAR_SCALE = 2.2, CAR_GAP = 5.2, CAR_STOP = 2.6, CAR_HALF = 1.05;
 // the distance along the lane from car c to the car ahead of it, middle to middle (Infinity when it's alone)
 function gapAhead(c, cars) {
   let best = Infinity;
@@ -1781,8 +1853,19 @@ class Car {
     this.mesh = protoClone('car:' + color, () => makeCar(color));
     d.group.add(this.mesh);
   }
+  // where its middle is along its way, from the zebra crossing's middle (below 0: still coming up to it)
+  crossP() { return wrapA(this.a) * this.r * this.dir; }
+  // past the stop line: it carries on over the crossing, and bots wait at the kerb until it's across
+  onCross() { const p = this.crossP(); return p + CAR_HALF > -CROSS_EDGE + 0.01 && p - CAR_HALF < CROSS_EDGE; }
+  // how far it can go before its front reaches the stop line while a bot is crossing (Infinity: nobody's crossing,
+  // or it's past the line already). It never moves past the line while one is
+  crossGap() {
+    if (!this.d.crossBusy) return Infinity;
+    const front = this.crossP() + CAR_HALF;
+    return front > -CROSS_EDGE + 0.01 ? Infinity : Math.max(0, -CROSS_EDGE - front);
+  }
   update(dt, cars) {
-    const gap = gapAhead(this, cars);
+    const gap = Math.min(gapAhead(this, cars), this.crossGap() + CAR_STOP);
     const want = this.d.asleep ? 0 : this.speed * clamp((gap - CAR_STOP) / (CAR_GAP - CAR_STOP), 0, 1);
     this.v = want < this.v ? want : Math.min(want, this.v + dt * 2.5); // brakes at once, pulls away gently
     this.a += this.dir * Math.min(this.v * dt, Math.max(0, gap - CAR_STOP)) / this.r;
@@ -1798,6 +1881,7 @@ function freeLaneAngle(lane, cars) {
   const on = cars.filter((c) => c.r === lane && !c.gone);
   for (let k = 0; k < 12; k++) {
     const a = Math.random() * TAU;
+    if (Math.abs(wrapA(a)) * lane < CROSS_EDGE + CAR_HALF + 1) continue; // never on the zebra crossing
     if (on.every((c) => Math.abs(((a - c.a + Math.PI) % TAU + TAU) % TAU - Math.PI) * lane >= CAR_GAP)) return a;
   }
   return null;
@@ -2062,6 +2146,7 @@ const cellMid = (i) => -WALK_HALF + (i + 0.5) * WALK_CELL;
 // what's in the way, as it stands: circles { x, z, r } and boxes { x, z, hw, hd, rot } (half sizes; turned like rotation.y)
 function walkShapes() {
   const s = DESKS.map(([x, z]) => ({ x, z, hw: 0.725, hd: 0.31, rot: 0 }));
+  for (const h of HOMES) { const c = houseAt(h.a, 0, 0); s.push({ x: c.x, z: c.z, hw: HOME_W / 2, hd: HOME_D / 2, rot: h.a }); }
   s.push({ x: 0, z: TOWER_Z, hw: HQ_W / 2, hd: HQ_D / 2, rot: 0 }, { x: KIOSK.x, z: KIOSK.z, hw: 0.65, hd: 0.4, rot: KIOSK_ROT },
     { x: BENCH.x, z: BENCH.z, hw: 0.75, hd: 0.24, rot: BENCH.rot },
     // behind the kiosk, out to the road: too tight for two bots to pass, so nobody walks round there
@@ -2082,15 +2167,41 @@ function blockShape(m, s) {
   const j0 = Math.max(0, cellOf(s.z - reach)), j1 = Math.min(WALK_N - 1, cellOf(s.z + reach));
   for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (shapeDist(s, cellMid(i), cellMid(j)) < BOT_R) m[j * WALK_N + i] = 1;
 }
-const WALK_EDGE = ROAD_IN - 0.2 - BOT_R; // a bot's middle stays this close to the centre: inside the road, with its kerb
+const WALK_EDGE = ROAD_IN - 0.2 - BOT_R; // on the plaza side, a bot's middle keeps inside the road and its kerb
+// where a bot may walk: the plaza side of the road; the zebra crossing and, in line with it, the gap between the middle
+// cottages; and the path along the island's edge in front of their doors (the cottages themselves are shapes in the
+// way, and close off the rest of the home row from the road)
+function walkOpen(x, z) {
+  const r = Math.hypot(x, z);
+  if (r <= WALK_EDGE) return true;
+  if (z > 0 && Math.abs(x) <= CROSS_W / 2 - 0.35 && r <= RIM_WALK) return true; // wide enough for two bots to pass
+  return r >= ROAD_OUT + 0.4 && r <= RIM_WALK && Math.abs(Math.atan2(x, z)) <= HOME_SPAN;
+}
+// a house's frame, from district space: x across its front, z out of its front
+function inHouse(h, x, z) {
+  const c = houseAt(h.a, 0, 0), dx = x - c.x, dz = z - c.z;
+  return { lx: dx * Math.cos(h.a) - dz * Math.sin(h.a), lz: dx * Math.sin(h.a) + dz * Math.cos(h.a) };
+}
+// on the zebra crossing, or within `kerb` of it on either side
+function onCrossing(x, z, kerb) {
+  const r = Math.hypot(x, z);
+  return z > 0 && Math.abs(x) < CROSS_W / 2 + 0.4 && r > ROAD_IN - kerb && r < ROAD_OUT + kerb;
+}
 let walkBase = null;
 function makeWalkMap(trees) {
   if (!walkBase) {
     walkBase = new Uint8Array(WALK_N * WALK_N);
-    for (let j = 0; j < WALK_N; j++) for (let i = 0; i < WALK_N; i++) if (Math.hypot(cellMid(i), cellMid(j)) > WALK_EDGE) walkBase[j * WALK_N + i] = 1;
+    for (let j = 0; j < WALK_N; j++) for (let i = 0; i < WALK_N; i++) if (!walkOpen(cellMid(i), cellMid(j))) walkBase[j * WALK_N + i] = 1;
     for (const sh of walkShapes()) blockShape(walkBase, sh);
-    // the HQ door's lane: from the plaza into the doorway
+    // door lanes: from the plaza into the HQ's doorway, and from the pavement into each house's front door
     for (let j = cellOf(DOOR.z - 0.2); j <= cellOf(DOOR.z + BOT_R + 0.1); j++) for (let i = cellOf(-0.4); i <= cellOf(0.4); i++) walkBase[j * WALK_N + i] = 2;
+    for (const h of HOMES) {
+      const c = houseAt(h.a, 0, 0), i0 = cellOf(c.x - 2.5), j0 = cellOf(c.z - 2.5);
+      for (let j = j0; j <= j0 + 20; j++) for (let i = i0; i <= i0 + 20; i++) {
+        const { lx, lz } = inHouse(h, cellMid(i), cellMid(j));
+        if (Math.abs(lx - h.doorX) <= 0.4 && lz >= HOME_D / 2 - 0.45 && lz <= HOME_D / 2 + 0.55) walkBase[j * WALK_N + i] = 2;
+      }
+    }
   }
   const m = walkBase.slice();
   for (const t of trees) blockShape(m, t);
@@ -2355,9 +2466,15 @@ class District {
     const benchShadow = contactShadow(1.8, 0.75, PLAZA_TOP + 0.03, BENCH.x, BENCH.z); benchShadow.rotation.y = BENCH.rot; G.add(benchShadow);
 
     // street lamps on the sidewalk, trees on the outer edge, the gate
-    for (const a of [0.2, -0.2, 1.03, -1.03, 1.83, -1.83, 2.48, -2.48]) { const l = makeLamp(); l.scale.setScalar(1.45); l.position.set(Math.sin(a) * WALK_R, 0.12, Math.cos(a) * WALK_R); G.add(l); }
+    // (no lamps by the home row: it reaches the sidewalk)
+    for (const a of [1.1, -1.1, 1.83, -1.83, 2.48, -2.48]) { const l = makeLamp(); l.scale.setScalar(1.45); l.position.set(Math.sin(a) * WALK_R, 0.12, Math.cos(a) * WALK_R); G.add(l); }
     for (const a of [1.05, -1.05, 1.83, -1.83]) { const t = makeTree(r, (0.8 + r() * 0.35) * 1.4); const rr = 14.0 + r() * 0.5; t.position.set(Math.sin(a) * rr, 0, Math.cos(a) * rr); G.add(t); }
     G.add(makeGate(this));
+    // the home row: still houses (baked with the rest) and the doors and windows that change (homeLights)
+    for (const h of HOMES) { const c = houseAt(h.a, 0, 0), holder = new THREE.Group(); holder.position.set(c.x, 0.1, c.z); holder.rotation.y = h.a; holder.add(buildHouse(h.i)); G.add(holder); }
+    this.homeLights = makeHomeLights(); this.homeLights.mesh.position.y = 0.1; G.add(this.homeLights.mesh);
+    const glowE = { m: this.homeLights.mesh.material, dayI: 0.5, nightI: 1.9, dim: 1 }; nightLit.push(glowE); this.windowLit.push(glowE);
+    this.homes = HOMES.map((h) => ({ ...h, holder: null }));
 
     // label above the tower
     const el = document.createElement('div'); el.className = 'dtag'; el.innerHTML = '<b></b><span></span>';
@@ -2526,6 +2643,31 @@ class District {
     if (bot.fanI >= 0 && this.fanHolders[bot.fanI] === bot) this.fanHolders[bot.fanI] = null;
     bot.spot = null; bot.spotKind = null; bot.fanI = -1;
   }
+  // a house for a new helper: the first nobody lives in (null when all six are taken); its door takes the helper's colour
+  claimHome(bot) {
+    const h = this.homes.find((x) => !x.holder);
+    if (!h) return null;
+    h.holder = bot; this.paintDoor(h, bot.color);
+    return h;
+  }
+  releaseHome(bot) {
+    const h = bot.house;
+    if (h && h.holder === bot) { h.holder = null; this.lightHome(h, false); this.paintDoor(h, DOOR_IDLE); }
+    bot.house = null;
+  }
+  // a house's front window, lit while its helper is in
+  lightHome(h, on) {
+    const t = this.homeLights.glow, px = t.image.data, o = h.i * 4;
+    for (let k = 0; k < 3; k++) px[o + k] = on ? HOME_GLOW[k] : 0;
+    px[o + 3] = 255; t.needsUpdate = true;
+  }
+  // a house's front door: its helper's colour, the idle wood colour, or dark while it stands open
+  paintDoor(h, color) {
+    const { start, count } = this.homeLights.doors[h.i], attr = this.homeLights.mesh.geometry.attributes.color, c = new THREE.Color(color);
+    for (let k = start; k < start + count; k++) attr.setXYZ(k, c.r, c.g, c.b);
+    attr.needsUpdate = true;
+  }
+  openDoor(h, open) { if (h) this.paintDoor(h, open ? DOOR_OPEN : h.holder ? h.holder.color : DOOR_IDLE); }
   // is another bot (not `but`) standing within a bot's room of (x, z)?
   standingNear(x, z, but) {
     for (const b of this.robots.values()) if (b !== but && b.solid() && !b.walking && Math.hypot(b.pos.x - x, b.pos.z - z) < BOT_GAP + 0.1) return true;
@@ -2637,6 +2779,11 @@ class District {
       if (live.length < wantCars) { const lane = live.length % 2 ? LANE_OUT : LANE_IN, a0 = freeLaneAngle(lane, this.cars); if (a0 !== null) this.cars.push(new Car(this, lane, lane === LANE_IN ? 1 : -1, a0)); }
       else if (live.length > wantCars) live[live.length - 1].leaving = true;
     }
+    // the zebra crossing: cars stop for a bot on it (walking or held up there) or walking up to it, and a bot waits at
+    // the kerb while a car is on it
+    this.crossBusy = false;
+    for (const b of this.robots.values()) if (b.solid() && onCrossing(b.pos.x, b.pos.z, b.walking ? 0.9 : BOT_R)) { this.crossBusy = true; break; }
+    this.carOnCross = this.cars.some((c) => !c.gone && c.onCross());
     for (const c of this.cars) c.update(dt, this.cars);
     this.cars = this.cars.filter((c) => !c.gone);
     // bots
@@ -2660,6 +2807,7 @@ class District {
     transit.loops.get(this.ring)?.removeStation(this);
     this.group.remove(this.label);
     this.labelEl.remove();
+    this.homeLights.mesh.geometry.dispose(); this.homeLights.mesh.material.dispose(); this.homeLights.glow.dispose();
     for (const e of this.ownLit) { const i = nightLit.indexOf(e); if (i >= 0) nightLit.splice(i, 1); }
     for (const e of this.windowLit) { const i = nightLit.indexOf(e); if (i >= 0) nightLit.splice(i, 1); }
   }
@@ -2938,9 +3086,14 @@ class Robot {
     this.build();
     this.pos = new THREE.Vector3();
     this.heading = 0;
+    // a helper's own house, while one is free: it steps out of it to work and walks back in when it's done (doorIn,
+    // homeIn, home). leaveT: how long it's been walking home to leave
+    this.house = this.isLead ? null : district.claimHome(this); this.doorT = 0; this.leaveT = 0;
     if (!city.primed || district.rise < 1) { this.mode = 'live'; this.scale = 1; this.snap = true; }
     else if (this.isLead) { this.pos.copy(DOOR); this.mode = 'live'; this.heading = 0; this.scale = 1; }
-    else {
+    else if (this.house && a.status === 'done') { this.mode = 'home'; this.scale = 0; this.pos.set(this.house.inside.x, 0, this.house.inside.z); district.lightHome(this.house, true); } // first seen done: home already
+    else if (this.house) { this.stepOut(); sfx('spawn'); queueMicrotask(() => cityEvent('spawn', this)); }
+    else { // every house taken: it beams in at the pad
       const at = district.arrivalPoint(); this.pos.set(at.x, 0, at.z); // the pad, or beside it while another bot stands there
       this.mode = 'beamIn'; this.scale = 0;
       this.beam = makeBeam(0x6ae6f5); this.beam.position.copy(this.pos).setY(0.15); this.beam.scale.set(0.75, 9, 0.75); district.group.add(this.beam);
@@ -3100,23 +3253,38 @@ class Robot {
     _v.set(0, 0.8, 0.4); this.bob.localToWorld(_v); burstGlitter(_v, 0x6ae6f5, 36, 2);
   }
 
+  // The lead goes into the HQ. A helper at home is gone; one with a house walks home (goalFor) and goes in, or beams out
+  // if that takes more than 25 s (the longest walk home is about 10 s); one without beams out where it stands.
   leave() {
     this.leaving = true; this.t = 0; this.moment = null; this.lookAt = null;
     this.d.releaseDesk(this); this.d.releaseSpots(this);
     this.clearArc(); this.clearTether();
     if (this.isLead) { this.mode = 'doorOut'; }
-    else {
-      this.mode = 'beamOut';
-      if (!this.beam) { this.beam = makeBeam(0x6ae6f5); this.d.group.add(this.beam); }
-      this.beam.position.copy(this.pos).setY(0.15); this.beam.scale.set(0.7, 9, 0.7);
-      sfx('leave');
-    }
+    else if (this.mode === 'home') { this.gone = true; }
+    else if (this.house && this.mode !== 'beamIn') { this.leaveT = 0; }
+    else this.beamOut();
   }
+  beamOut() {
+    this.mode = 'beamOut'; this.t = 0;
+    if (!this.beam) { this.beam = makeBeam(0x6ae6f5); this.d.group.add(this.beam); }
+    this.beam.position.copy(this.pos).setY(0.15); this.beam.scale.set(0.7, 9, 0.7);
+    sfx('leave');
+  }
+  // out of its front door: it grows in the doorway and steps out onto its step
+  stepOut() {
+    const h = this.house;
+    this.mode = 'doorIn'; this.doorT = 0; this.scale = 0; this.fromHome = true;
+    this.pos.set(h.inside.x, 0, h.inside.z); this.heading = h.step.face + Math.PI;
+    this.d.openDoor(h, true);
+  }
+  // its front step, where it turns to go in
+  homeGoal() { const s = this.house.step; return { x: s.x, z: s.z, face: s.face, enter: true }; }
 
   goalFor() {
     const a = this.data;
     if (this.mode === 'doorOut') return { x: DOOR.x, z: DOOR.z, face: Math.PI };
-    if (this.d.asleep) return null; // asleep districts stay put
+    if (this.leaving && this.house) return this.homeGoal();
+    if (this.d.asleep && !this.snap) return null; // asleep districts stay put (once their bots are in place)
     if (this.moment?.hold) return this.goal || { x: this.pos.x, z: this.pos.z, face: this.heading }; // stay put for a salute, high-five or wave
     // every place it's sent is its own (a desk, a spot, a place around the lead), so no two bots stand in one place
     if (this.delivering) {
@@ -3128,6 +3296,7 @@ class Robot {
     }
     if (!this.isLead && a.status === 'done') {
       this.d.releaseDesk(this);
+      if (this.house) { this.d.releaseSpots(this); return this.homeGoal(); } // done: home
       const s = this.d.claimSpot(this, 'pad');
       return s ? { x: s.x, z: s.z, face: s.face } : this.spareGoal();
     }
@@ -3146,7 +3315,7 @@ class Robot {
     return s ? { x: s.x, z: s.z, face: s.face } : { x: this.pos.x, z: this.pos.z, face: this.heading };
   }
   // in the way of other bots: standing or walking in the district (not one fading in or out)
-  solid() { return !this.gone && (this.mode === 'live' || this.mode === 'doorOut' || this.mode === 'beamIn') && this.scale > 0.3; }
+  solid() { return !this.gone && this.mode !== 'beamOut' && this.mode !== 'home' && this.scale > 0.3; }
   // One step toward g along its path (walkPath): around desks, buildings, trees and the bots standing about, aside for
   // a bot just ahead (both keep to their right, or step left when the right is blocked), and never into another bot
   // (only walking bots give way: one standing stays put). Returns whether the bot is walking. A bot that gets no
@@ -3213,6 +3382,9 @@ class Robot {
         break;
       }
     }
+    // at the kerb while a car is on the zebra crossing: it waits, looking about, until the car is across (cars stop for
+    // a bot that's crossing or about to, so one that's on the crossing is soon over it)
+    if (d.carOnCross && !onCrossing(this.pos.x, this.pos.z, BOT_R) && onCrossing(nx, nz, BOT_R)) { this.stuckT = 0; return true; }
     const went = Math.hypot(nx - this.pos.x, nz - this.pos.z), near = this.near, dw = Math.hypot(wp.x - nx, wp.z - nz);
     if (Math.hypot(wp.x - near.x, wp.z - near.z) > 0.01) { near.x = wp.x; near.z = wp.z; near.d = Infinity; } // a new waypoint
     if (dw < near.d - 0.05) { near.d = dw; this.stuckT = 0; } else this.stuckT += dt;
@@ -3252,24 +3424,53 @@ class Robot {
       this.scale = clamp(1 - (k - 0.35) / 0.5, 0, 1);
       if (k > 0.5 && !this._outFlash) { this._outFlash = true; _v.copy(this.pos).setY(0.9); this.d.group.localToWorld(_v); burstGlitter(_v, 0x6ae6f5, 50, 2.5); }
       if (k > 1.5) { this.gone = true; return; }
+    } else if (this.mode === 'doorIn' || this.mode === 'homeIn') {
+      // through its front door: out (growing in the doorway, onto its step) or in (shrinking into the doorway)
+      const h = this.house, out = this.mode === 'doorIn', k = clamp((this.doorT += dt) / 0.9, 0, 1);
+      const from = out ? h.inside : h.step, to = out ? h.step : h.inside;
+      this.pos.x = from.x + (to.x - from.x) * k; this.pos.z = from.z + (to.z - from.z) * k;
+      this.scale = out ? clamp(k / 0.5, 0, 1) : clamp((1 - k) / 0.5, 0, 1);
+      this.heading = angleDamp(this.heading, out ? h.step.face + Math.PI : h.step.face, 10, dt);
+      this.stepT = 0.25;
+      if (k >= 1) {
+        this.d.openDoor(h, false);
+        if (out) {
+          this.mode = 'live'; this.scale = 1;
+          // out: a quick salute, and the lead waves hello if it's free
+          this.startMoment('salute', 1.3, { hold: true });
+          const lead = this.d.lead(); if (lead && lead !== this && lead.free()) lead.startMoment('wave', 1.8, { hold: true, other: this });
+        } else if (this.leaving) { this.gone = true; return; }
+        else { this.mode = 'home'; this.scale = 0; this.d.lightHome(h, true); }
+      }
+    } else if (this.mode === 'home' && a.status !== 'done' && !this.d.asleep) {
+      this.d.lightHome(this.house, false); this.stepOut(); // back to work
     }
+    // a helper walking home to leave that takes far too long (held up for good) beams out instead
+    if (this.leaving && this.mode === 'live' && !this.isLead && (this.leaveT += dt) > 25) this.beamOut();
     // movement
-    let walking = false;
+    let walking = this.mode === 'doorIn' || this.mode === 'homeIn';
     if (this.mode === 'live' || this.mode === 'doorOut') {
       this.goal = this.goalFor();
-      if (this.goal && this.snap) { this.pos.set(this.goal.x, 0, this.goal.z); this.heading = this.goal.face ?? 0; this.groundY = groundAt(this.pos.x, this.pos.z); }
+      if (this.goal?.enter && this.snap) { // a past or just-loaded session: a finished helper is already home
+        this.mode = 'home'; this.scale = 0; this.pos.set(this.house.inside.x, 0, this.house.inside.z); this.d.lightHome(this.house, true); this.goal = null;
+      } else if (this.goal && this.snap) { this.pos.set(this.goal.x, 0, this.goal.z); this.heading = this.goal.face ?? 0; this.groundY = groundAt(this.pos.x, this.pos.z); }
       this.snap = false;
       if (this.goal) {
-        if (Math.hypot(this.goal.x - this.pos.x, this.goal.z - this.pos.z) > 0.06) walking = this.walkToward(this.goal, this.delivering ? 2.1 : 1.7, dt);
+        // to and from home it walks at a commuter's pace
+        const speed = this.delivering ? 2.1 : this.goal.enter || this.fromHome ? 2.4 : 1.7;
+        if (Math.hypot(this.goal.x - this.pos.x, this.goal.z - this.pos.z) > 0.06) walking = this.walkToward(this.goal, speed, dt);
         else {
           this.path = null; this.pathTo = null; this.stuckT = 0;
+          if (!this.moment?.hold) this.fromHome = false; // (there: not just standing still for a salute)
           this.heading = angleDamp(this.heading, this.goal.face ?? this.heading, 7, dt);
           if (this.goal.deliver && this.delivering) this.finishDelivery();
           if (this.mode === 'doorOut') { this.gone = true; return; }
+          if (this.goal.enter && !this.moment?.hold) { this.mode = 'homeIn'; this.doorT = 0; this.d.openDoor(this.house, true); walking = true; }
         }
       }
     }
     this.walking = walking;
+    this.root.visible = this.mode !== 'home'; // inside: not drawn
     if (this.moment && walking && !this.moment.hold) this.moment = null;
     this.atDesk = !walking && !!this.goal?.desk && this.mode === 'live' && Math.hypot(this.goal.x - this.pos.x, this.goal.z - this.pos.z) <= 0.06; // there, not waiting on the way
     // stand on the plaza, the pad or the grass, stepping up and down smoothly
@@ -3277,14 +3478,11 @@ class Robot {
     this.root.position.copy(this.pos).setY(this.groundY + BOT_FEET);
     this.root.rotation.y = this.heading;
     this.root.scale.setScalar(Math.max(0.001, this.scale) * BOT_SCALE);
-    // desk screen shows what the bot is doing
-    if (this.desk) {
-      const show = this.desk.occupant === this;
-      this.desk.screen.visible = show && this.atDesk && !this.d.asleep;
-      if (show) {
-        const sk = a.waiting ? 'wait' : a.status === 'error' ? 'error' : a.status === 'done' ? 'done' : (SCREEN_KIND[a.kind] || 'think');
-        this.desk.screen.material = screenMats[sk];
-      }
+    // desk screen shows what the bot is doing (only its own desk's: one it has left may be someone else's now)
+    if (this.desk && this.desk.occupant === this) {
+      this.desk.screen.visible = this.atDesk && !this.d.asleep;
+      const sk = a.waiting ? 'wait' : a.status === 'error' ? 'error' : a.status === 'done' ? 'done' : (SCREEN_KIND[a.kind] || 'think');
+      this.desk.screen.material = screenMats[sk];
     }
     this.planMoment(dt);
     this.animate(dt);
@@ -3610,7 +3808,7 @@ class Robot {
     this.clearArc(); this.clearTether();
     if (this.beam) disposeMesh(this.beam);
     if (this.carry) this.bob.remove(this.carry);
-    this.d.releaseDesk(this); this.d.releaseSpots(this);
+    this.d.releaseDesk(this); this.d.releaseSpots(this); this.d.releaseHome(this);
     this.root.remove(this.label); this.labelEl.remove();
     this.d.group.remove(this.root);
     this.faceTex.dispose(); this.faceMat.dispose(); this.bodyMat.dispose(); this.tipMat.dispose();
@@ -3883,6 +4081,13 @@ function overview(dur = 1.6) {
   flyTo(new THREE.Vector3(Math.sin(az) * dist * 0.78, dist * 0.62, Math.cos(az) * dist * 0.78), new THREE.Vector3(0, 1, 0), dur);
 }
 function botFrame(bot, out, tgt, dist = 9) {
+  if (bot.mode === 'home') { // at home: its front door and lit window, from the path outside
+    const s = bot.house.step, h = bot.house.inside;
+    tgt.set(s.x, 1.6, s.z); bot.d.group.localToWorld(tgt);
+    const out1 = _v2.set(s.x - h.x, 0, s.z - h.z).transformDirection(bot.d.group.matrixWorld);
+    out.copy(tgt).addScaledVector(out1, dist).addScaledVector(bot.d.n, dist * 0.42);
+    return;
+  }
   bot.head.getWorldPosition(tgt); tgt.y += 0.1;
   const fwd = _v2.set(0, 0, 1).applyQuaternion(bot.root.getWorldQuaternion(_q)).normalize();
   out.copy(tgt).addScaledVector(fwd, dist).addScaledVector(bot.d.n, dist * 0.42);
@@ -3918,7 +4123,7 @@ function updateCamera(dt) {
     return;
   }
   // follow the selected bot by sliding the orbit with it
-  if (selection.bot && selection.follow && !selection.bot.gone && !selection.bot.d.leaving) { // not down into the cloud sea
+  if (selection.bot && selection.follow && !selection.bot.gone && !selection.bot.d.leaving && selection.bot.mode !== 'home') { // not down into the cloud sea, nor into its house
     selection.bot.head.getWorldPosition(_ft); _ft.y += 0.1;
     _prevT.copy(controls.target);
     controls.target.x = damp(controls.target.x, _ft.x, 4, dt); controls.target.y = damp(controls.target.y, _ft.y, 4, dt); controls.target.z = damp(controls.target.z, _ft.z, 4, dt);
@@ -3975,7 +4180,7 @@ const director = {
   update(dt) {
     this.t += dt;
     const s = this.shot;
-    if (!s || this.t > s.dur || (s.bot && (s.bot.gone || s.bot.leaving || s.bot.d.leaving)) || (s.d && s.d.leaving)) { this.next(); return; }
+    if (!s || this.t > s.dur || (s.bot && (s.bot.gone || s.bot.leaving || s.bot.mode === 'home' || s.bot.d.leaving)) || (s.d && s.d.leaving)) { this.next(); return; }
     const k = this.t / s.dur;
     const P = _fp, T = _ft;
     if (s.type === 'orbit') {
@@ -4016,7 +4221,7 @@ const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2(); let pointerIn = false, downAt = null;
 function pickables() {
   const list = [];
-  for (const d of city.districts.values()) { if (d.leaving) continue; for (const b of d.robots.values()) if (!b.leaving) list.push(b.body, b.headMesh); }
+  for (const d of city.districts.values()) { if (d.leaving) continue; for (const b of d.robots.values()) if (!b.leaving && b.mode !== 'home') list.push(b.body, b.headMesh); }
   for (const d of city.districts.values()) if (!d.leaving) list.push(d.pickMesh);
   return list;
 }
@@ -5496,7 +5701,9 @@ window.__skyborne = { composer, mayorName, customLeadName, city, director, trans
   // for the smoke tests: the pure helpers, and the console's own drawing
   isLive, isBusy, visibleDocs, layoutTimeline, fmtDur, detail, openDetail, closeDetail, showDocs, renderUI, drawLog, drawSteps, logRows: () => logRows, Car, LANE_IN, LANE_OUT,
   // the walk map and a city run without drawing (simulate), fed by a source the test drives (useSource)
-  useSource, simulate, walkable, walkCell, walkPath, walkShapes, shapeDist, SPOT_PLACES, FAN, DESKS, BOT_R };
+  useSource, simulate, walkable, walkCell, walkPath, walkShapes, shapeDist, SPOT_PLACES, FAN, DESKS, BOT_R,
+  // the home row and the zebra crossing
+  HOMES, ROAD_IN, ROAD_OUT, CROSS_W, CROSS_EDGE, CAR_HALF };
 requestAnimationFrame(frame);
 if (DEMO) {
   // the static site: its recording plays on a loop beside the sample districts, and nothing connects to a server

@@ -24,9 +24,17 @@ notes are the version's section here.
 - Skybots no longer walk through each other. A walking bot steps aside for one ahead (both keep right). It never pushes into a bot that is standing still.
 - No two bots are sent to stand in the same place:
   - each idle spot is held by one bot at a time;
-  - helpers that arrive together beam in side by side around the pad;
-  - finished helpers wait in their own spots by the pad;
-  - helpers handing their results to the lead stand around it, not on top of each other.
+  - helpers handing their results to the lead stand around it, not on top of each other;
+  - helpers that beam in (when every house is taken, see below) arrive side by side around the pad, and wait in their own spots by the pad when they finish.
+- Opening the city on a quiet (asleep) session puts its Skybots in their places. Before, they all stood on one spot in the middle of the plaza.
+
+**Homes for helpers**
+- Each district has a row of six cottages at its front, across the road from the plaza, with their doors facing the island's edge.
+- A helper steps out of its own front door when it starts, walks to the zebra crossing and crosses the road to work. When it finishes, it hands its result to the lead and walks home. Its door shows its colour, and its window lights while it's in.
+- A helper sent back to work goes straight back out (or turns round on its way home). One that leaves while it's out walks home first.
+- The lead has no house: it works from the HQ as before. When all six houses are taken, a new helper beams down by the pad as before.
+- Cars stop at the zebra crossing for a Skybot that is crossing or about to, and a Skybot waits at the kerb while a car is on the crossing.
+- Clicking a helper that is at home (in the console) shows its front door and lit window.
 
 **Console**
 - The console has an × in its header that hides it, at every screen size. On a phone the toolbar icon that hides the console was easy to miss.

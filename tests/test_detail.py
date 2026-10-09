@@ -98,7 +98,17 @@ def turn(app):
     hook(app, 'PreToolUse.json', tool_use_id='T1', tool_input={'command': 'ls'})
     hook(app, 'PostToolUse.json', tool_use_id='T1', tool_input={'command': 'ls'}, tool_response={'stdout': 'a.txt'})
     assert wait_until(lambda: app.store.stats()['events'] == 3)
-    assert wait_until(lambda: app.hub.knows(SID))
+    # the writer saves a batch, then hands it to the hub one event at a time (and a hook is answered before it's queued,
+    # so they can even queue out of order): wait for all three in memory, or a test that evicts the session next can
+    # have a late one put it back
+    assert wait_until(lambda: in_memory(app, lambda s: s.prompts and (s.calls.get('T1') or {}).get('pre') is not None and s.calls['T1']['outcome'] == 'ok'))
+
+
+def in_memory(app, check):
+    """check(session) on the hub's copy of the session, under its lock (False while it isn't in memory)."""
+    with app.hub.lock:
+        s = app.hub.sessions.get(SID)
+        return bool(s and check(s))
 
 
 def get(app, path, token='', **headers):
@@ -177,6 +187,7 @@ def test_a_past_session_is_rebuilt_once_and_kept(app, monkeypatch):
     assert len(loads) == 1  # kept
     hook(app, 'Stop.json')  # a new event (the server reads the history back in): the kept copy is out of date
     assert wait_until(lambda: app.store.stats()['events'] == 4)
+    assert wait_until(lambda: in_memory(app, lambda s: s.stops))  # in memory too (see turn)
     app.hub.evict(older_than_ms=-1000)
     before = len(loads)
     assert app.session_detail(SID)['conversation'][-1]['who'] == 'claude'
