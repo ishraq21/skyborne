@@ -19,6 +19,15 @@ notes are the version's section here.
 - Sun shadows now follow the camera, so they also show on districts far from City Hall.
 - A full city of 60 districts takes about a fifth fewer draw calls, so frames are smoother on most machines.
 
+**Skybots walk around things**
+- Skybots no longer walk through desks, the kiosk, the bench, trees or the HQ. They follow a path around them.
+- Skybots no longer walk through each other. A walking bot steps aside for one ahead (both keep right). It never pushes into a bot that is standing still.
+- No two bots are sent to stand in the same place:
+  - each idle spot is held by one bot at a time;
+  - helpers that arrive together beam in side by side around the pad;
+  - finished helpers wait in their own spots by the pad;
+  - helpers handing their results to the lead stand around it, not on top of each other.
+
 **Console**
 - The console has an × in its header that hides it, at every screen size. On a phone the toolbar icon that hides the console was easy to miss.
 

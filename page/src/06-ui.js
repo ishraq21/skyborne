@@ -824,6 +824,14 @@ function useSource(next) {
   begin();
 }
 function connect() { useSource(window.__skyborneFake || liveSource()); }
+// for the smoke tests: run every district for `seconds` in steps of dt, without drawing; each() after every step
+function simulate(seconds, dt = 0.05, each = null) {
+  for (let t = 0; t < seconds - 1e-9; t += dt) {
+    clockT.now += dt;
+    for (const d of city.districts.values()) if (!d.dead) d.update(dt);
+    if (each) each();
+  }
+}
 
 // live: /events sends names, every recent session, `ready`, the open permission requests (`asks`),
 // then each change. After a reconnect (the server restarted) the new set replaces the old one at
@@ -958,7 +966,9 @@ setInterval(() => { if (askUI.size && prefs.console) tickAsks(); }, 1000);
 ensureLoop(1); buildSkyTraffic();
 window.__skyborne = { composer, mayorName, customLeadName, city, director, transit, selectDistrict, selectBot, overview, renderer, scene, camera, controls, renderTokTip, playRecording, backToLive, audioState: () => actx && actx.state,
   // for the smoke tests: the pure helpers, and the console's own drawing
-  isLive, isBusy, visibleDocs, layoutTimeline, fmtDur, detail, openDetail, closeDetail, showDocs, renderUI, drawLog, drawSteps, logRows: () => logRows, Car, LANE_IN, LANE_OUT };
+  isLive, isBusy, visibleDocs, layoutTimeline, fmtDur, detail, openDetail, closeDetail, showDocs, renderUI, drawLog, drawSteps, logRows: () => logRows, Car, LANE_IN, LANE_OUT,
+  // the walk map and a city run without drawing (simulate), fed by a source the test drives (useSource)
+  useSource, simulate, walkable, walkCell, walkPath, walkShapes, shapeDist, SPOT_PLACES, FAN, DESKS, BOT_R };
 requestAnimationFrame(frame);
 if (DEMO) {
   // the static site: its recording plays on a loop beside the sample districts, and nothing connects to a server
