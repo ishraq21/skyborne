@@ -59,6 +59,7 @@ const cellMid = (i) => -WALK_HALF + (i + 0.5) * WALK_CELL;
 // what's in the way, as it stands: circles { x, z, r } and boxes { x, z, hw, hd, rot } (half sizes; turned like rotation.y)
 function walkShapes() {
   const s = DESKS.map(([x, z]) => ({ x, z, hw: 0.725, hd: 0.31, rot: 0 }));
+  for (const h of HOMES) { const c = houseAt(h.a, 0, 0); s.push({ x: c.x, z: c.z, hw: HOME_W / 2, hd: HOME_D / 2, rot: h.a }); }
   s.push({ x: 0, z: TOWER_Z, hw: HQ_W / 2, hd: HQ_D / 2, rot: 0 }, { x: KIOSK.x, z: KIOSK.z, hw: 0.65, hd: 0.4, rot: KIOSK_ROT },
     { x: BENCH.x, z: BENCH.z, hw: 0.75, hd: 0.24, rot: BENCH.rot },
     // behind the kiosk, out to the road: too tight for two bots to pass, so nobody walks round there
@@ -79,15 +80,41 @@ function blockShape(m, s) {
   const j0 = Math.max(0, cellOf(s.z - reach)), j1 = Math.min(WALK_N - 1, cellOf(s.z + reach));
   for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (shapeDist(s, cellMid(i), cellMid(j)) < BOT_R) m[j * WALK_N + i] = 1;
 }
-const WALK_EDGE = ROAD_IN - 0.2 - BOT_R; // a bot's middle stays this close to the centre: inside the road, with its kerb
+const WALK_EDGE = ROAD_IN - 0.2 - BOT_R; // on the plaza side, a bot's middle keeps inside the road and its kerb
+// where a bot may walk: the plaza side of the road; the zebra crossing and, in line with it, the gap between the middle
+// cottages; and the path along the island's edge in front of their doors (the cottages themselves are shapes in the
+// way, and close off the rest of the home row from the road)
+function walkOpen(x, z) {
+  const r = Math.hypot(x, z);
+  if (r <= WALK_EDGE) return true;
+  if (z > 0 && Math.abs(x) <= CROSS_W / 2 - 0.35 && r <= RIM_WALK) return true; // wide enough for two bots to pass
+  return r >= ROAD_OUT + 0.4 && r <= RIM_WALK && Math.abs(Math.atan2(x, z)) <= HOME_SPAN;
+}
+// a house's frame, from district space: x across its front, z out of its front
+function inHouse(h, x, z) {
+  const c = houseAt(h.a, 0, 0), dx = x - c.x, dz = z - c.z;
+  return { lx: dx * Math.cos(h.a) - dz * Math.sin(h.a), lz: dx * Math.sin(h.a) + dz * Math.cos(h.a) };
+}
+// on the zebra crossing, or within `kerb` of it on either side
+function onCrossing(x, z, kerb) {
+  const r = Math.hypot(x, z);
+  return z > 0 && Math.abs(x) < CROSS_W / 2 + 0.4 && r > ROAD_IN - kerb && r < ROAD_OUT + kerb;
+}
 let walkBase = null;
 function makeWalkMap(trees) {
   if (!walkBase) {
     walkBase = new Uint8Array(WALK_N * WALK_N);
-    for (let j = 0; j < WALK_N; j++) for (let i = 0; i < WALK_N; i++) if (Math.hypot(cellMid(i), cellMid(j)) > WALK_EDGE) walkBase[j * WALK_N + i] = 1;
+    for (let j = 0; j < WALK_N; j++) for (let i = 0; i < WALK_N; i++) if (!walkOpen(cellMid(i), cellMid(j))) walkBase[j * WALK_N + i] = 1;
     for (const sh of walkShapes()) blockShape(walkBase, sh);
-    // the HQ door's lane: from the plaza into the doorway
+    // door lanes: from the plaza into the HQ's doorway, and from the pavement into each house's front door
     for (let j = cellOf(DOOR.z - 0.2); j <= cellOf(DOOR.z + BOT_R + 0.1); j++) for (let i = cellOf(-0.4); i <= cellOf(0.4); i++) walkBase[j * WALK_N + i] = 2;
+    for (const h of HOMES) {
+      const c = houseAt(h.a, 0, 0), i0 = cellOf(c.x - 2.5), j0 = cellOf(c.z - 2.5);
+      for (let j = j0; j <= j0 + 20; j++) for (let i = i0; i <= i0 + 20; i++) {
+        const { lx, lz } = inHouse(h, cellMid(i), cellMid(j));
+        if (Math.abs(lx - h.doorX) <= 0.4 && lz >= HOME_D / 2 - 0.45 && lz <= HOME_D / 2 + 0.55) walkBase[j * WALK_N + i] = 2;
+      }
+    }
   }
   const m = walkBase.slice();
   for (const t of trees) blockShape(m, t);
@@ -352,9 +379,15 @@ class District {
     const benchShadow = contactShadow(1.8, 0.75, PLAZA_TOP + 0.03, BENCH.x, BENCH.z); benchShadow.rotation.y = BENCH.rot; G.add(benchShadow);
 
     // street lamps on the sidewalk, trees on the outer edge, the gate
-    for (const a of [0.2, -0.2, 1.03, -1.03, 1.83, -1.83, 2.48, -2.48]) { const l = makeLamp(); l.scale.setScalar(1.45); l.position.set(Math.sin(a) * WALK_R, 0.12, Math.cos(a) * WALK_R); G.add(l); }
+    // (no lamps by the home row: it reaches the sidewalk)
+    for (const a of [1.1, -1.1, 1.83, -1.83, 2.48, -2.48]) { const l = makeLamp(); l.scale.setScalar(1.45); l.position.set(Math.sin(a) * WALK_R, 0.12, Math.cos(a) * WALK_R); G.add(l); }
     for (const a of [1.05, -1.05, 1.83, -1.83]) { const t = makeTree(r, (0.8 + r() * 0.35) * 1.4); const rr = 14.0 + r() * 0.5; t.position.set(Math.sin(a) * rr, 0, Math.cos(a) * rr); G.add(t); }
     G.add(makeGate(this));
+    // the home row: still houses (baked with the rest) and the doors and windows that change (homeLights)
+    for (const h of HOMES) { const c = houseAt(h.a, 0, 0), holder = new THREE.Group(); holder.position.set(c.x, 0.1, c.z); holder.rotation.y = h.a; holder.add(buildHouse(h.i)); G.add(holder); }
+    this.homeLights = makeHomeLights(); this.homeLights.mesh.position.y = 0.1; G.add(this.homeLights.mesh);
+    const glowE = { m: this.homeLights.mesh.material, dayI: 0.5, nightI: 1.9, dim: 1 }; nightLit.push(glowE); this.windowLit.push(glowE);
+    this.homes = HOMES.map((h) => ({ ...h, holder: null }));
 
     // label above the tower
     const el = document.createElement('div'); el.className = 'dtag'; el.innerHTML = '<b></b><span></span>';
@@ -523,6 +556,31 @@ class District {
     if (bot.fanI >= 0 && this.fanHolders[bot.fanI] === bot) this.fanHolders[bot.fanI] = null;
     bot.spot = null; bot.spotKind = null; bot.fanI = -1;
   }
+  // a house for a new helper: the first nobody lives in (null when all six are taken); its door takes the helper's colour
+  claimHome(bot) {
+    const h = this.homes.find((x) => !x.holder);
+    if (!h) return null;
+    h.holder = bot; this.paintDoor(h, bot.color);
+    return h;
+  }
+  releaseHome(bot) {
+    const h = bot.house;
+    if (h && h.holder === bot) { h.holder = null; this.lightHome(h, false); this.paintDoor(h, DOOR_IDLE); }
+    bot.house = null;
+  }
+  // a house's front window, lit while its helper is in
+  lightHome(h, on) {
+    const t = this.homeLights.glow, px = t.image.data, o = h.i * 4;
+    for (let k = 0; k < 3; k++) px[o + k] = on ? HOME_GLOW[k] : 0;
+    px[o + 3] = 255; t.needsUpdate = true;
+  }
+  // a house's front door: its helper's colour, the idle wood colour, or dark while it stands open
+  paintDoor(h, color) {
+    const { start, count } = this.homeLights.doors[h.i], attr = this.homeLights.mesh.geometry.attributes.color, c = new THREE.Color(color);
+    for (let k = start; k < start + count; k++) attr.setXYZ(k, c.r, c.g, c.b);
+    attr.needsUpdate = true;
+  }
+  openDoor(h, open) { if (h) this.paintDoor(h, open ? DOOR_OPEN : h.holder ? h.holder.color : DOOR_IDLE); }
   // is another bot (not `but`) standing within a bot's room of (x, z)?
   standingNear(x, z, but) {
     for (const b of this.robots.values()) if (b !== but && b.solid() && !b.walking && Math.hypot(b.pos.x - x, b.pos.z - z) < BOT_GAP + 0.1) return true;
@@ -634,6 +692,11 @@ class District {
       if (live.length < wantCars) { const lane = live.length % 2 ? LANE_OUT : LANE_IN, a0 = freeLaneAngle(lane, this.cars); if (a0 !== null) this.cars.push(new Car(this, lane, lane === LANE_IN ? 1 : -1, a0)); }
       else if (live.length > wantCars) live[live.length - 1].leaving = true;
     }
+    // the zebra crossing: cars stop for a bot on it (walking or held up there) or walking up to it, and a bot waits at
+    // the kerb while a car is on it
+    this.crossBusy = false;
+    for (const b of this.robots.values()) if (b.solid() && onCrossing(b.pos.x, b.pos.z, b.walking ? 0.9 : BOT_R)) { this.crossBusy = true; break; }
+    this.carOnCross = this.cars.some((c) => !c.gone && c.onCross());
     for (const c of this.cars) c.update(dt, this.cars);
     this.cars = this.cars.filter((c) => !c.gone);
     // bots
@@ -657,6 +720,7 @@ class District {
     transit.loops.get(this.ring)?.removeStation(this);
     this.group.remove(this.label);
     this.labelEl.remove();
+    this.homeLights.mesh.geometry.dispose(); this.homeLights.mesh.material.dispose(); this.homeLights.glow.dispose();
     for (const e of this.ownLit) { const i = nightLit.indexOf(e); if (i >= 0) nightLit.splice(i, 1); }
     for (const e of this.windowLit) { const i = nightLit.indexOf(e); if (i >= 0) nightLit.splice(i, 1); }
   }

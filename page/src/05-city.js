@@ -203,6 +203,13 @@ function overview(dur = 1.6) {
   flyTo(new THREE.Vector3(Math.sin(az) * dist * 0.78, dist * 0.62, Math.cos(az) * dist * 0.78), new THREE.Vector3(0, 1, 0), dur);
 }
 function botFrame(bot, out, tgt, dist = 9) {
+  if (bot.mode === 'home') { // at home: its front door and lit window, from the path outside
+    const s = bot.house.step, h = bot.house.inside;
+    tgt.set(s.x, 1.6, s.z); bot.d.group.localToWorld(tgt);
+    const out1 = _v2.set(s.x - h.x, 0, s.z - h.z).transformDirection(bot.d.group.matrixWorld);
+    out.copy(tgt).addScaledVector(out1, dist).addScaledVector(bot.d.n, dist * 0.42);
+    return;
+  }
   bot.head.getWorldPosition(tgt); tgt.y += 0.1;
   const fwd = _v2.set(0, 0, 1).applyQuaternion(bot.root.getWorldQuaternion(_q)).normalize();
   out.copy(tgt).addScaledVector(fwd, dist).addScaledVector(bot.d.n, dist * 0.42);
@@ -238,7 +245,7 @@ function updateCamera(dt) {
     return;
   }
   // follow the selected bot by sliding the orbit with it
-  if (selection.bot && selection.follow && !selection.bot.gone && !selection.bot.d.leaving) { // not down into the cloud sea
+  if (selection.bot && selection.follow && !selection.bot.gone && !selection.bot.d.leaving && selection.bot.mode !== 'home') { // not down into the cloud sea, nor into its house
     selection.bot.head.getWorldPosition(_ft); _ft.y += 0.1;
     _prevT.copy(controls.target);
     controls.target.x = damp(controls.target.x, _ft.x, 4, dt); controls.target.y = damp(controls.target.y, _ft.y, 4, dt); controls.target.z = damp(controls.target.z, _ft.z, 4, dt);
@@ -295,7 +302,7 @@ const director = {
   update(dt) {
     this.t += dt;
     const s = this.shot;
-    if (!s || this.t > s.dur || (s.bot && (s.bot.gone || s.bot.leaving || s.bot.d.leaving)) || (s.d && s.d.leaving)) { this.next(); return; }
+    if (!s || this.t > s.dur || (s.bot && (s.bot.gone || s.bot.leaving || s.bot.mode === 'home' || s.bot.d.leaving)) || (s.d && s.d.leaving)) { this.next(); return; }
     const k = this.t / s.dur;
     const P = _fp, T = _ft;
     if (s.type === 'orbit') {
@@ -336,7 +343,7 @@ const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2(); let pointerIn = false, downAt = null;
 function pickables() {
   const list = [];
-  for (const d of city.districts.values()) { if (d.leaving) continue; for (const b of d.robots.values()) if (!b.leaving) list.push(b.body, b.headMesh); }
+  for (const d of city.districts.values()) { if (d.leaving) continue; for (const b of d.robots.values()) if (!b.leaving && b.mode !== 'home') list.push(b.body, b.headMesh); }
   for (const d of city.districts.values()) if (!d.leaving) list.push(d.pickMesh);
   return list;
 }

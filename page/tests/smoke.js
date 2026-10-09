@@ -551,22 +551,24 @@ const dist = (f) => path.resolve(__dirname, '../dist', f);
         && r.top >= document.getElementById('reelLive').getBoundingClientRect().bottom && r.bottom < a.top + a.height / 3; })() };  // under the LIVE pill
   });
   const reel = await reelTop();
-  // close-ups of a bot (the opening one, and a later one early and late as the camera closes in and rises): its tag
-  // sits below the top's pills. And the longest counts likely ("60 districts · 99 agents working") still fit one line
+  // close-ups of a bot at its desk (the opening one, and a later one early and late as the camera closes in and rises):
+  // its tag sits below the top's pills. Each is measured once the camera has had 2 s of the city's own time to ease in
+  // (a slow page draws fewer frames, each at most 0.05 s, so a fixed wait in real time isn't enough there). And the longest counts likely ("60 districts · 99 agents working") still fit one line
   // on a 320 px phone
   const tagClear = () => page.evaluate(async () => {
     const sk = window.__skyborne, d = sk.director;
-    const bots = [...sk.city.districts.values()].filter((x) => !x.leaving && !x.asleep).flatMap((x) => [...x.robots.values()]).filter((b) => !b.leaving && b.mode === 'live').slice(0, 2);
+    const bots = [...sk.city.districts.values()].filter((x) => !x.leaving && !x.asleep).flatMap((x) => [...x.robots.values()]).filter((b) => !b.leaving && b.mode === 'live' && b.atDesk).slice(0, 2);
     const out = []; d.lastEventAt = performance.now() + 1e9;  // the city's own events don't cut away meanwhile
     for (const bot of bots) for (const [type, t] of [['reveal', 50], ['hero', 100], ['hero', 900]]) {
       d.queue.unshift({ type, bot, dur: 1000, a0: 0 }); d.next(); d.t = t;
-      await new Promise((r) => setTimeout(r, 2500));  // the camera eases in
+      for (const end = performance.now() + 15000; d.t < t + 2 && performance.now() < end;) await new Promise((r) => setTimeout(r, 100));  // the camera eases in
       const tag = bot.labelEl.getBoundingClientRect();
       if (!tag.width) continue;  // a tag the city hides doesn't count
-      out.push(tag.top >= Math.max(document.getElementById('reelStats').getBoundingClientRect().bottom, document.getElementById('reelLive').getBoundingClientRect().bottom));
+      const top = Math.max(document.getElementById('reelStats').getBoundingClientRect().bottom, document.getElementById('reelLive').getBoundingClientRect().bottom);
+      out.push({ ok: tag.top >= top, at: `${bot.key} ${bot.mode}${bot.walking ? ' walking' : ''} ${type} ${t}: shot ${d.shot?.type}${d.shot?.bot === bot ? '' : ' (another)'}, tag ${Math.round(tag.top)} under ${Math.round(top)}` });
     }
     d.lastEventAt = 0; d.next();
-    return out.length >= 3 && out.every(Boolean);
+    return out.length >= 3 && out.every((o) => o.ok) ? true : out.map((o) => o.at);  // (what it saw, when it fails)
   });
   const fitsLong = () => page.evaluate(() => {
     const st = document.getElementById('reelStats'), c = st.cloneNode(); c.id = ''; c.textContent = '60\u00a0districts  ·  99\u00a0agents working';
@@ -579,7 +581,7 @@ const dist = (f) => path.resolve(__dirname, '../dist', f);
   reelPhone.tagClear = await tagClear(); reelPhone.fitsLong = await fitsLong();
   await page.setViewportSize({ width: 1280, height: 800 }); await page.waitForTimeout(600);
   for (const r of [reel, reelPhone]) {
-    if (!r.on || !r.body || !r.shown || r.text !== 'SKYBORNE' || !r.fits || !r.logo || !r.short || !r.noFollow || !r.counts || !r.mark || !r.oneLine || !r.tagClear || !r.toastClear || r.fitsLong === false) errors.push('Reel mode broken: ' + JSON.stringify({ r, phone: r === reelPhone }));
+    if (!r.on || !r.body || !r.shown || r.text !== 'SKYBORNE' || !r.fits || !r.logo || !r.short || !r.noFollow || !r.counts || !r.mark || !r.oneLine || r.tagClear !== true || !r.toastClear || r.fitsLong === false) errors.push('Reel mode broken: ' + JSON.stringify({ r, phone: r === reelPhone }));
   }
   await page.screenshot({ path: dist('smoke-reel.png') });
   await page.keyboard.press('Escape'); await page.waitForTimeout(800);
@@ -809,6 +811,28 @@ const dist = (f) => path.resolve(__dirname, '../dist', f);
     return out;
   });
   if (Object.values(carGap).some((l) => !(l.min >= 2.4) || !(l.moved > 0.5))) errors.push(`Cars on one lane: ${JSON.stringify(carGap)}`);
+  // cars stop for Skybots at the zebra crossing: on each lane, a car coming up to it while a bot is crossing stops with
+  // its front at the stop line, and goes on once the bot is over; a car already past the line carries on across
+  const carCross = await page.evaluate(() => {
+    const o = window.__skyborne, d = { asleep: false, crossBusy: true, group: { add() {}, remove() {} } }, out = {};
+    for (const [name, lane, dir] of [['in', o.LANE_IN, 1], ['out', o.LANE_OUT, -1]]) {
+      const c = new o.Car(d, lane, dir, -1.0 * dir); c.speed = 3.2; // about 10 before the crossing
+      const past = new o.Car(d, lane, dir, (-o.CROSS_EDGE - o.CAR_HALF + 0.3) / lane * dir); past.speed = 3.2; past.v = 3.2; // its front just over the line
+      const cars = [c, past];
+      d.crossBusy = true; let front = -Infinity, pastOver = false;
+      for (let k = 0; k < 300; k++) {
+        for (const x of cars) x.update(0.05, cars);
+        front = Math.max(front, c.crossP() + o.CAR_HALF);
+        if (k < 60 && past.crossP() - o.CAR_HALF > o.CROSS_EDGE) pastOver = true; // over within 3 s (later it laps round to the queue)
+      }
+      const stopped = +c.v.toFixed(2);
+      d.crossBusy = false;
+      for (let k = 0; k < 200; k++) for (const x of cars) x.update(0.05, cars);
+      out[name] = { front: +front.toFixed(3), line: +(-o.CROSS_EDGE).toFixed(3), stopped, pastOver, went: c.crossP() - o.CAR_HALF > o.CROSS_EDGE };
+    }
+    return out;
+  });
+  if (Object.values(carCross).some((l) => !(l.front <= l.line + 0.011) || !(l.front > l.line - 0.3) || l.stopped !== 0 || !l.pastOver || !l.went)) errors.push(`Cars at the zebra crossing: ${JSON.stringify(carCross)}`);
   await click('#segTime [data-v="auto"]');
 
   // a recording plays in place of the city (through the file picker), then "Back to live" returns
@@ -845,39 +869,50 @@ const dist = (f) => path.resolve(__dirname, '../dist', f);
   if (liveAgain.status !== 'live' || liveAgain.n < 4) errors.push('Back to live failed: ' + JSON.stringify(liveAgain));
 
   // Skybots walk around things. The walk map first, in every district (their trees differ): every place a bot can be
-  // sent (desks, spots) is open; there's a path from each to every other that never crosses furniture (checked every
-  // 0.1); and each can still be reached with a bot standing at every other place
+  // sent (desks, spots, the step of each house) is open; there's a path from each to every other that never crosses
+  // furniture (checked every 0.1), and that crosses the road only at the zebra crossing; and each can still be reached
+  // with a bot standing at every other place on the plaza
   const walkMap = await page.evaluate(() => {
-    const o = window.__skyborne, out = { districts: 0, shut: [], noWay: [], through: [], cutOff: [] };
+    const o = window.__skyborne, out = { districts: 0, shut: [], noWay: [], through: [], offCrossing: [], cutOff: [] };
+    const onRoad = (x, z) => { const r = Math.hypot(x, z); return r > o.ROAD_IN - o.BOT_R && r < o.ROAD_OUT + o.BOT_R; };
     for (const d of [...o.city.districts.values()].filter((x) => !x.leaving)) {
       out.districts++;
       const places = o.DESKS.map(([x, z], i) => ({ name: 'desk ' + i, x, z: z - 0.92 }));
       for (const [kind, list] of Object.entries(o.SPOT_PLACES)) list.forEach((p, i) => places.push({ name: `${kind} ${i}`, x: p.x, z: p.z }));
-      for (const p of places) if (!o.walkable(d, p.x, p.z)) out.shut.push(`${d.id}: ${p.name}`);
-      for (const a of places) for (const b of places) {
-        if (a === b) continue;
+      const steps = o.HOMES.map((h) => ({ name: 'home ' + h.i, x: h.step.x, z: h.step.z, home: true }));
+      for (const p of [...places, ...steps]) if (!o.walkable(d, p.x, p.z)) out.shut.push(`${d.id}: ${p.name}`);
+      for (const a of [...places, ...steps]) for (const b of [...places, ...steps]) {
+        if (a === b || (a.home && b.home)) continue;
         const path = o.walkPath(d, a, b);
         if (!path) { out.noWay.push(`${d.id}: ${a.name} to ${b.name}`); continue; }
-        let px = a.x, pz = a.z, crossed = false;
+        let px = a.x, pz = a.z, crossed = false, off = false;
         for (const w of path) {
           const n = Math.ceil(Math.hypot(w.x - px, w.z - pz) / 0.1);
-          for (let k = 1; k <= n && !crossed; k++) crossed = !o.walkable(d, px + (w.x - px) * k / n, pz + (w.z - pz) * k / n);
+          for (let k = 1; k <= n && !crossed; k++) {
+            const x = px + (w.x - px) * k / n, z = pz + (w.z - pz) * k / n;
+            crossed = !o.walkable(d, x, z);
+            if (onRoad(x, z) && (z < 0 || Math.abs(x) > o.CROSS_W / 2)) off = true;
+          }
           px = w.x; pz = w.z;
         }
         if (crossed) out.through.push(`${d.id}: ${a.name} to ${b.name}`);
+        if (off) out.offCrossing.push(`${d.id}: ${a.name} to ${b.name}`);
         if (!o.walkPath(d, a, b, places.filter((q) => q !== a && q !== b))) out.cutOff.push(`${d.id}: ${a.name} to ${b.name}`);
       }
     }
-    for (const k of ['shut', 'noWay', 'through', 'cutOff']) out[k] = out[k].slice(0, 5);
+    for (const k of ['shut', 'noWay', 'through', 'offCrossing', 'cutOff']) out[k] = out[k].slice(0, 5);
     return out;
   });
-  if (!walkMap.districts || walkMap.shut.length || walkMap.noWay.length || walkMap.through.length || walkMap.cutOff.length) errors.push('Walk map: ' + JSON.stringify(walkMap));
+  if (!walkMap.districts || walkMap.shut.length || walkMap.noWay.length || walkMap.through.length || walkMap.offCrossing.length || walkMap.cutOff.length) errors.push('Walk map: ' + JSON.stringify(walkMap));
   // Then a busy district, run without drawing (simulate) and fed by the test (useSource). A lead and seven helpers
-  // arrive at once; three finish (they hand their results to the lead, then wait by the pad); four more arrive while
-  // those three wait; the three leave; everyone idles (more bots than idle spots) and wanders, then goes back to work.
-  // Every new helper beams in (it walks from the pad, not snapped into place). All along, no bot comes within
-  // BOT_R - 0.2 of furniture (except in a doorway), and no two bots are closer than 0.6 for more than 0.5 s. At the end
-  // every bot stands where it was sent: at a desk, or (no desk left) at a spare spot.
+  // arrive at once: six step out of the six houses, the seventh beams in at the pad. Three finish: they hand their
+  // results to the lead and walk home, where their windows light. One goes back to work from home, and another turns
+  // back on its way home. Four more arrive (every house is taken: they beam in); two at home leave, and a third leaves
+  // from its desk (it walks home first); their houses are free and dark. Everyone idles (more bots than idle spots)
+  // and wanders, then goes back to work. All along, no bot comes within BOT_R - 0.2 of furniture (except in a
+  // doorway), no two bots are closer than 0.6 for more than 0.5 s, no bot steps on the road off the zebra crossing, and
+  // no car is on the crossing while a bot is. At the end every bot stands where it was sent: at a desk, or (no desk
+  // left) at a spare spot.
   await page.evaluate(() => window.__skyborne.useSource({ start(h) { window.__walkFeed = h; }, stop() {} }));
   await page.waitForFunction(() => window.__walkFeed && window.__skyborne.city.districts.size === 0, null, { timeout: 30000 }).catch(() => {});
   const walkRun = await page.evaluate(() => {
@@ -891,38 +926,76 @@ const dist = (f) => path.resolve(__dirname, '../dist', f);
     const d = o.city.districts.get('walk');
     if (!d) return { error: 'no district' };
     d.riseStart = performance.now() - 10_000; o.simulate(0.1); // risen: helpers now beam in and walk (a rising district snaps its bots into place)
-    const shapes = [...o.walkShapes(), ...d.walkTrees], r = { closest: Infinity, closestAt: '', together: {}, beamed: [] };
+    const shapes = [...o.walkShapes(), ...d.walkTrees], r = { closest: Infinity, closestAt: '', together: {}, entered: [], offCrossing: [], carOnBot: 0, crossing: 0, carsWaited: 0 };
     const check = () => {
       const bots = [...d.robots.values()].filter((b) => b.solid());
       for (const b of bots) {
+        const rr = Math.hypot(b.pos.x, b.pos.z), road = rr > o.ROAD_IN - o.BOT_R + 0.1 && rr < o.ROAD_OUT + o.BOT_R - 0.1;
+        if (road && (b.pos.z < 0 || Math.abs(b.pos.x) > o.CROSS_W / 2 - 0.3) && r.offCrossing.length < 5) r.offCrossing.push(`${b.id} at (${b.pos.x.toFixed(2)}, ${b.pos.z.toFixed(2)})`);
+        if (road && b.pos.z > 0) { r.crossing++; if (d.cars.some((c) => !c.gone && c.onCross())) r.carOnBot++; }
         if (o.walkCell(d, b.pos.x, b.pos.z) === 2) continue;
         const c = Math.min(...shapes.map((s) => o.shapeDist(s, b.pos.x, b.pos.z)));
         if (c < r.closest) { r.closest = c; r.closestAt = `${b.id} at (${b.pos.x.toFixed(2)}, ${b.pos.z.toFixed(2)})`; }
       }
+      if (d.cars.some((c) => c.v < 0.05 && c.crossGap() < 0.5)) r.carsWaited++; // (a stat for the summary: frames a car stood at the crossing)
       for (let i = 0; i < bots.length; i++) for (let j = i + 1; j < bots.length; j++)
         if (Math.hypot(bots[i].pos.x - bots[j].pos.x, bots[i].pos.z - bots[j].pos.z) < 0.6) { const k = bots[i].id + '/' + bots[j].id; r.together[k] = (r.together[k] || 0) + 0.05; }
     };
-    const arrived = (ids) => { for (const id of ids) r.beamed.push(d.robots.get(id)?.mode === 'beamIn'); };
+    const arrived = (ids) => { for (const id of ids) r.entered.push(d.robots.get(id)?.mode); };
     const there = (b) => !b.walking && b.goal && Math.hypot(b.goal.x - b.pos.x, b.goal.z - b.pos.z) <= 0.06;
+    const lit = (b) => !!b?.house && d.homeLights.glow.image.data[b.house.i * 4] > 0;
+    const until = (ok, s) => { for (let t = 0; t < s && !ok(); t += 0.5) o.simulate(0.5, 0.05, check); return ok(); };
+    const set = (id, status) => { agents = agents.map((a) => a.id === id ? helper(id, status) : a); feed(); };
     agents = [lead(), ...H([1, 2, 3, 4, 5, 6, 7])]; feed(); arrived(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'h7']); o.simulate(30, 0.05, check);
     agents = agents.map((a) => ['h1', 'h2', 'h3'].includes(a.id) ? helper(a.id, 'done') : a); feed(); o.simulate(25, 0.05, check);
-    r.byPad = ['h1', 'h2', 'h3'].filter((id) => { const b = d.robots.get(id); return b?.spotKind === 'pad' && there(b); }).length;
+    r.home = ['h1', 'h2', 'h3'].filter((id) => { const b = d.robots.get(id); return b?.mode === 'home' && lit(b); }).length;
+    // back to work: from home, and turning round on the way home (after handing over its result)
+    const h2 = d.robots.get('h2'), h4 = d.robots.get('h4');
+    set('h2', 'working'); o.simulate(20, 0.05, check);
+    r.fromHome = h2.atDesk && there(h2) && !lit(h2);
+    set('h4', 'done'); r.h4Homeward = until(() => h4.walking && !!h4.goal?.enter && Math.hypot(h4.pos.x, h4.pos.z) < 8, 20);
+    set('h4', 'working'); o.simulate(20, 0.05, check);
+    r.turnedBack = h4.atDesk && there(h4) && h4.mode === 'live';
     agents = [...agents, ...H([8, 9, 10, 11])]; feed(); arrived(['h8', 'h9', 'h10', 'h11']); o.simulate(25, 0.05, check);
-    agents = agents.filter((a) => !['h1', 'h2', 'h3'].includes(a.id)); feed(); o.simulate(20, 0.05, check);
-    r.gone = ['h1', 'h2', 'h3'].filter((id) => !d.robots.has(id)).length;
+    // two leave from home (gone at once), one from its desk: it walks home, and goes in
+    const h5 = d.robots.get('h5'), houses = ['h1', 'h3', 'h5'].map((id) => d.robots.get(id).house);
+    agents = agents.filter((a) => !['h1', 'h3', 'h5'].includes(a.id)); feed(); o.simulate(0.1, 0.05, check);
+    r.walksHome = h5.mode === 'live' && !!h5.goal?.enter;
+    r.wentIn = until(() => h5.mode === 'homeIn' || h5.gone, 20) && h5.mode !== 'beamOut';
+    o.simulate(5, 0.05, check);
+    r.gone = ['h1', 'h3', 'h5'].filter((id) => !d.robots.has(id)).length;
+    r.freed = houses.filter((h) => h && !h.holder && d.homeLights.glow.image.data[h.i * 4] === 0).length;
     const working = agents;
     agents = agents.map((a) => ({ ...a, status: 'idle', kind: 'idle' })); feed(); o.simulate(60, 0.05, check);
     agents = working.map((a) => ({ ...a, activitySince: Date.now() })); feed(); o.simulate(40, 0.05, check);
     const live = [...d.robots.values()].filter((b) => !b.leaving);
     r.stray = live.filter((b) => !((b.atDesk || b.spotKind === 'spare') && there(b))).map((b) => `${b.id} at (${b.pos.x.toFixed(2)}, ${b.pos.z.toFixed(2)})`);
     r.atDesks = live.filter((b) => b.atDesk).length;
-    r.beamed = `${r.beamed.filter(Boolean).length}/${r.beamed.length}`;
+    r.entered = r.entered.join(' ');
     r.closest = +r.closest.toFixed(2);
     r.longest = +Math.max(0, ...Object.values(r.together)).toFixed(2); r.together = Object.fromEntries(Object.entries(r.together).filter(([, t]) => t > 0.5));
     return r;
   });
-  if (walkRun.error || !(walkRun.closest >= 0.25) || walkRun.longest > 0.5 || walkRun.stray.length || walkRun.beamed !== '11/11' || walkRun.byPad !== 3
-    || walkRun.gone !== 3 || walkRun.atDesks !== 7) errors.push('Skybots walking: ' + JSON.stringify(walkRun));
+  // (helpers 1 to 6 step out of their houses; 7, then 8 to 11 with every house taken, beam in)
+  if (walkRun.error || !(walkRun.closest >= 0.25) || walkRun.longest > 0.5 || walkRun.stray.length || walkRun.entered !== 'doorIn doorIn doorIn doorIn doorIn doorIn beamIn beamIn beamIn beamIn beamIn'
+    || walkRun.home !== 3 || !walkRun.fromHome || !walkRun.h4Homeward || !walkRun.turnedBack || !walkRun.walksHome || !walkRun.wentIn || walkRun.gone !== 3 || walkRun.freed !== 3
+    || walkRun.offCrossing.length || walkRun.carOnBot || !walkRun.crossing || walkRun.atDesks !== 7) errors.push('Skybots walking: ' + JSON.stringify(walkRun));
+  // sessions at load put their bots in place at once: a quiet one (asleep, 5 minutes since it was heard from) too, not
+  // leaving its bots in a heap at the middle of the plaza; and in a busy one, a helper that finished 10 s ago is home,
+  // its window lit
+  const atLoad = await page.evaluate(() => {
+    const o = window.__skyborne, now = Date.now(), then = now - 5 * 60_000;
+    const ag = (id, status, since) => ({ id, name: id === 'main' ? 'Skybot' : 'Scout ' + id, type: id === 'main' ? 'lead' : 'Explore', status, kind: status === 'working' ? 'search' : status, activity: status, activitySince: since, parent: id === 'main' ? null : 'main' });
+    window.__walkFeed.docs(new Map([
+      ['sleepy', { v: 2, title: 'sleepy', headline: 'Quiet', startedAt: then - 60_000, updatedAt: then, turns: 1, tokens: { total: 1000 }, agents: [ag('main', 'idle', then), ag('h1', 'idle', then)], feed: [] }],
+      ['busy', { v: 2, title: 'busy', headline: 'Busy', startedAt: now - 60_000, updatedAt: now, turns: 1, tokens: { total: 1000 }, agents: [ag('main', 'working', now), ag('h2', 'done', now - 10_000)], feed: [] }]]));
+    const quiet = o.city.districts.get('sleepy'), busy = o.city.districts.get('busy');
+    if (!quiet || !busy) return { error: 'missing district' };
+    o.simulate(0.2);
+    const [a, b] = [...quiet.robots.values()], h2 = busy.robots.get('h2');
+    return { asleep: quiet.asleep, apart: a && b ? +Math.hypot(a.pos.x - b.pos.x, a.pos.z - b.pos.z).toFixed(2) : null, h2: h2?.mode, lit: !!h2?.house && busy.homeLights.glow.image.data[h2.house.i * 4] > 0 };
+  });
+  if (atLoad.error || !atLoad.asleep || !(atLoad.apart >= 0.85) || atLoad.h2 !== 'home' || !atLoad.lit) errors.push('Bots at load: ' + JSON.stringify(atLoad));
   await page.evaluate(() => window.__skyborne.backToLive());
   await page.waitForFunction(() => { const c = window.__skyborne.city; return c.status === 'live' && [...c.districts.values()].filter((d) => !d.leaving).length >= 4; },
     null, { timeout: 30000 }).catch(() => {});
@@ -979,6 +1052,6 @@ const dist = (f) => path.resolve(__dirname, '../dist', f);
   server.close();
   const ok = !errors.length && info.districts > 0 && info.status === 'live';
   console.log(ok ? 'OK' : 'FAIL', JSON.stringify({ ...info, ring: Math.round(signs.ring), blimp: Math.round(signs.blimpWidth), displayFont: signs.font,
-    fonts: fontResponses.length, city60, walk: { closest: walkRun.closest, longestTogether: walkRun.longest }, questionsMs: questions, perf }), errors.length ? errors : '');
+    fonts: fontResponses.length, city60, walk: { closest: walkRun.closest, longestTogether: walkRun.longest, crossing: walkRun.crossing, carsWaited: walkRun.carsWaited }, questionsMs: questions, perf }), errors.length ? errors : '');
   process.exit(ok ? 0 : 1);
 })();

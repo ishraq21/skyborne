@@ -70,8 +70,11 @@ Skyborne turns your Claude Code sessions into a living city in the sky.
 Every agent is a Skybot: a small robot that acts out what its agent is doing, so you can read the
 city at a glance.
 
-- **One per agent**: each session's lead, plus one for every helper it launches. Helpers beam down
-  when they start (the lead waves hello if it's free) and beam back up shortly after they finish.
+- **One per agent**: each session's lead, plus one for every helper it launches.
+- **Homes for helpers**: each district has a row of six cottages. A helper steps out of its own
+  front door when it starts (the lead waves hello if it's free), crosses the road at the zebra crossing,
+  where cars stop for it, and walks home when it finishes. Its window lights while it's in. When all six
+  houses are taken, a new helper beams down by the pad instead, and beams back up shortly after it finishes.
 - **Their own names**: every Skybot gets a name, like Gumdrop or Onyx, and helpers show their role,
   like Explore or Plan.
 - **Props for the job**: a book while reading, a magnifying glass while searching, orbiting lights

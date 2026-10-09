@@ -10,21 +10,82 @@ const ROAD_IN = 9.0, ROAD_OUT = 11.6, LANE_IN = 9.65, LANE_OUT = 10.95, WALK_R =
 const FLOOR_H = 1.6, GROUND_H = 2.8, DOOR_H = 2.4, DOOR_W = 1.3, BS = 1.3; // a Skybot is about 1.25 across its hands
 // Building lots around the ring road, in the order a district grows into them.
 // a = angle from the district's front (local +z, away from City Hall) toward +x.
+// (the home row holds the front, between the park and the café)
 const LOTS = [
-  { a: 0.62, type: 'park' },
-  { a: -0.62, type: 'cafe' },
-  { a: -1.45, type: 'apartment' },
-  { a: 1.45, type: 'shop' },
-  { a: -2.2, type: 'tower' },
-  { a: 2.2, type: 'tower' },
-  { a: 2.75, type: 'apartment' },
-  { a: -2.75, type: 'shop' },
+  { a: 0.84, type: 'park' },
+  { a: -0.84, type: 'cafe' },
+  { a: -1.4, type: 'apartment' },
+  { a: 1.4, type: 'shop' },
+  { a: -2.05, type: 'tower' },
+  { a: 2.05, type: 'tower' },
+  { a: 2.6, type: 'apartment' },
+  { a: -2.6, type: 'shop' },
 ];
+
+// The home row: six cottages at the island's front, just past the road, one for each helper desk. Their doors face
+// out, to the island's edge (and the camera's usual view of a district). A helper steps out of its own front door when
+// it starts, walks along the path by the edge to the gap between the two middle cottages, crosses the road at the zebra
+// crossing (angle 0, CROSS_W wide, in line with the gap) and walks home the same way when it's done; its front window
+// lights while it's in. The path (out to HOME_SPAN either side, inside RIM_WALK) is wide enough for two bots to pass.
+// Each house: its angle, where a bot stands on its step, where it goes in, and its door's middle across it (doorX).
+const HOME_R = 12.55, HOME_W = 2.2, HOME_D = 1.3, HOME_WALL = 3.1, HOME_SPAN = 0.6, RIM_WALK = 14.8, CROSS_W = 2.2;
+// cars stop with their fronts this far from the crossing's middle (just short of its stripes) while a bot is crossing
+const CROSS_EDGE = CROSS_W / 2 + 0.15;
+const HOME_COLORS = [0xf4c7a1, 0xbfdcf0, 0xf2e2a6, 0xc9e7c4, 0xf1c4d4, 0xd7cdf0];
+// a point in a house's own frame (x across its front, z out of its front toward the island's edge) in district space
+const houseAt = (a, lx, lz) => ({ x: Math.sin(a) * HOME_R + Math.cos(a) * lx + Math.sin(a) * lz, z: Math.cos(a) * HOME_R - Math.sin(a) * lx + Math.cos(a) * lz });
+// (nearest the crossing first: a new helper takes the first free one)
+const HOMES = [0.2, -0.2, 0.39, -0.39, 0.58, -0.58].map((a, i) => {
+  const doorX = -0.35, step = houseAt(a, doorX, HOME_D / 2 + 0.45), inside = houseAt(a, doorX, HOME_D / 2 - 0.35);
+  return { i, a, doorX, step: { ...step, face: Math.atan2(inside.x - step.x, inside.z - step.z) }, inside };
+});
+// a house's still parts: walls, roof, chimney, step, sill and back windows (its door and front window are in the
+// district's home lights, which change)
+function buildHouse(i) {
+  const g = new THREE.Group(), wall = HOME_COLORS[i % HOME_COLORS.length], H = HOME_WALL, front = HOME_D / 2;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(HOME_W, H, HOME_D), stdMat(wall)); body.position.y = H / 2; body.castShadow = true; body.receiveShadow = true; g.add(body);
+  const shape = new THREE.Shape(); shape.moveTo(-front - 0.18, 0); shape.lineTo(front + 0.18, 0); shape.lineTo(0, 1.3); shape.closePath();
+  const roofGeo = new THREE.ExtrudeGeometry(shape, { depth: HOME_W + 0.16, bevelEnabled: false }).translate(0, 0, -(HOME_W + 0.16) / 2).rotateY(Math.PI / 2);
+  const roof = new THREE.Mesh(roofGeo, stdMat(shiftHue(wall, 0.02, -0.25, -0.38))); roof.position.y = H; roof.castShadow = true; g.add(roof);
+  const chim = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.7, 0.3), stdMat(0x8e8a9c)); chim.position.set(0.65, H + 0.75, -0.2); chim.castShadow = true; g.add(chim);
+  const stepGeo = new THREE.BoxGeometry(DOOR_W + 0.3, 0.1, 0.35), stepMesh = new THREE.Mesh(stepGeo, stdMat(PAVE_DARK)); stepMesh.position.set(HOMES[i].doorX, 0.05, front + 0.17); g.add(stepMesh);
+  const sill = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.06, 0.12), stdMat(0xf4f3ef)); sill.position.set(0.68, 0.87, front + 0.05); g.add(sill);
+  for (const x of [-0.5, 0.5]) { const w = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.8), stdMat(0x2a3048)); w.position.set(x, 1.7, -front - 0.01); w.rotation.y = Math.PI; g.add(w); }
+  return g;
+}
+// the doors and front windows of a district's six houses, as one mesh it repaints: a door takes its resident's
+// colour (dark while it stands open), and a window lights through its own texel of the glow map while someone's home
+const HOME_GLOW = [255, 217, 160];
+function makeHomeLights() {
+  const parts = [], doors = [];
+  const add = (geo, i, lx, ly, lz, color, texel) => {
+    const g = geo.clone().toNonIndexed(), h = HOMES[i], m = new THREE.Matrix4().makeRotationY(h.a);
+    const at = houseAt(h.a, 0, 0); m.setPosition(at.x, 0, at.z);
+    g.translate(lx, ly, lz).applyMatrix4(m);
+    const n = g.attributes.position.count, col = new Float32Array(n * 3), uv = new Float32Array(n * 2), c = new THREE.Color(color);
+    for (let k = 0; k < n; k++) { col.set([c.r, c.g, c.b], k * 3); uv.set([(texel + 0.5) / 8, 0.5], k * 2); }
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'color', 'uv'].includes(k)) g.deleteAttribute(k);
+    return g;
+  };
+  let start = 0;
+  for (const h of HOMES) {
+    const door = add(new THREE.BoxGeometry(DOOR_W, DOOR_H, 0.06), h.i, h.doorX, DOOR_H / 2, HOME_D / 2 + 0.03, DOOR_IDLE, 7);
+    doors.push({ start, count: door.attributes.position.count }); start += door.attributes.position.count; parts.push(door);
+  }
+  for (const h of HOMES) parts.push(add(new THREE.PlaneGeometry(0.6, 0.95), h.i, 0.68, 1.4, HOME_D / 2 + 0.01, 0x23304a, h.i));
+  const geo = mergeGeometries(parts, false); parts.forEach((g) => g.dispose());
+  const glow = new THREE.DataTexture(new Uint8Array(8 * 4), 8, 1); glow.magFilter = glow.minFilter = THREE.NearestFilter; glow.colorSpace = THREE.SRGBColorSpace; glow.needsUpdate = true; // (lit like the facades' windows)
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, emissive: 0xffffff, emissiveMap: glow, emissiveIntensity: 0.6 });
+  const mesh = new THREE.Mesh(geo, mat); mesh.receiveShadow = true; mesh.userData.keep = true;
+  return { mesh, glow, doors };
+}
+const DOOR_IDLE = 0x8a6a52, DOOR_OPEN = 0x15161c;
 // development points a district needs before each lot gets built (see District.develop)
 const LOT_STEPS = [0, 5, 12, 22, 34, 50, 70, 95];
 const ASPHALT = 0x3b4152, CURB = 0xddd6c6;
 // where idle bots hang about on the plaza (District.claimSpot gives each to one bot at a time)
-const IDLE_SPOTS = [[6.6, -1.25], [2.9, -1.8], [-5.4, 5.6], [4.6, 6.25], [-7.1, 1.75], [0.75, 7.6], [-3.0, -2.0]];
+const IDLE_SPOTS = [[6.6, -1.25], [2.9, -1.8], [-5.4, 5.6], [4.6, 6.25], [-7.1, 1.75], [-2.6, 7.0], [-3.0, -2.0]]; // (none at the crossing's foot)
 
 function makeRoadRing() {
   const g = new THREE.Group();
@@ -36,9 +97,20 @@ function makeRoadRing() {
   const dashes = [];
   for (let i = 0; i < 48; i++) {
     const a = (i / 48) * TAU, r = (ROAD_IN + ROAD_OUT) / 2;
+    if (Math.abs(wrapA(a)) * r < CROSS_W / 2 + 0.4) continue; // none over the zebra crossing
     dashes.push(new THREE.BoxGeometry(0.75, 0.02, 0.1).rotateY(a).translate(Math.sin(a) * r, 0.125, Math.cos(a) * r));
   }
   const dm = new THREE.Mesh(mergeGeometries(dashes), stdMat(0xf5e6a8)); dashes.forEach((d) => d.dispose()); g.add(dm);
+  // the zebra crossing at the front (angle 0): white stripes across the road, between the plaza and the home row
+  const zebra = [];
+  for (let r = ROAD_IN + 0.2; r < ROAD_OUT - 0.1; r += 0.5) zebra.push(new THREE.BoxGeometry(CROSS_W, 0.02, 0.28).translate(0, 0.124, r + 0.14));
+  const zm = new THREE.Mesh(mergeGeometries(zebra), stdMat(0xf4f3ef)); zebra.forEach((z) => z.dispose()); g.add(zm);
+  // the home row's paving: the path along the island's edge in front of the cottage doors, and through the gap between
+  // the middle cottages to the sidewalk (a ring's angle t runs from +x toward -z, so a district angle a is t = a - PI/2)
+  const edge = new THREE.Mesh(new THREE.RingGeometry(HOME_R + HOME_D / 2, RIM_WALK + 0.05, 40, 1, -HOME_SPAN - 0.05 - Math.PI / 2, 2 * HOME_SPAN + 0.1).rotateX(-Math.PI / 2), stdMat(PAVE));
+  edge.position.y = 0.12; edge.receiveShadow = true; g.add(edge);
+  const gap = new THREE.Mesh(new THREE.PlaneGeometry(CROSS_W - 0.4, HOME_R + HOME_D / 2 - ROAD_OUT - 0.6).rotateX(-Math.PI / 2), stdMat(PAVE));
+  gap.position.set(0, 0.12, (HOME_R + HOME_D / 2 + ROAD_OUT + 0.6) / 2); gap.receiveShadow = true; g.add(gap);
   return g;
 }
 
@@ -67,7 +139,7 @@ function makeCar(color) {
 // A car is built at its first size and drawn CAR_SCALE bigger: about as long as a Skybot is tall (2.0).
 // Each lane runs one way; a car eases off to keep its distance from the car ahead (CAR_GAP between their
 // middles) and stops before it would touch it (CAR_STOP), so cars never pass through each other.
-const CAR_SCALE = 2.2, CAR_GAP = 5.2, CAR_STOP = 2.6;
+const CAR_SCALE = 2.2, CAR_GAP = 5.2, CAR_STOP = 2.6, CAR_HALF = 1.05;
 // the distance along the lane from car c to the car ahead of it, middle to middle (Infinity when it's alone)
 function gapAhead(c, cars) {
   let best = Infinity;
@@ -85,8 +157,19 @@ class Car {
     this.mesh = protoClone('car:' + color, () => makeCar(color));
     d.group.add(this.mesh);
   }
+  // where its middle is along its way, from the zebra crossing's middle (below 0: still coming up to it)
+  crossP() { return wrapA(this.a) * this.r * this.dir; }
+  // past the stop line: it carries on over the crossing, and bots wait at the kerb until it's across
+  onCross() { const p = this.crossP(); return p + CAR_HALF > -CROSS_EDGE + 0.01 && p - CAR_HALF < CROSS_EDGE; }
+  // how far it can go before its front reaches the stop line while a bot is crossing (Infinity: nobody's crossing,
+  // or it's past the line already). It never moves past the line while one is
+  crossGap() {
+    if (!this.d.crossBusy) return Infinity;
+    const front = this.crossP() + CAR_HALF;
+    return front > -CROSS_EDGE + 0.01 ? Infinity : Math.max(0, -CROSS_EDGE - front);
+  }
   update(dt, cars) {
-    const gap = gapAhead(this, cars);
+    const gap = Math.min(gapAhead(this, cars), this.crossGap() + CAR_STOP);
     const want = this.d.asleep ? 0 : this.speed * clamp((gap - CAR_STOP) / (CAR_GAP - CAR_STOP), 0, 1);
     this.v = want < this.v ? want : Math.min(want, this.v + dt * 2.5); // brakes at once, pulls away gently
     this.a += this.dir * Math.min(this.v * dt, Math.max(0, gap - CAR_STOP)) / this.r;
@@ -102,6 +185,7 @@ function freeLaneAngle(lane, cars) {
   const on = cars.filter((c) => c.r === lane && !c.gone);
   for (let k = 0; k < 12; k++) {
     const a = Math.random() * TAU;
+    if (Math.abs(wrapA(a)) * lane < CROSS_EDGE + CAR_HALF + 1) continue; // never on the zebra crossing
     if (on.every((c) => Math.abs(((a - c.a + Math.PI) % TAU + TAU) % TAU - Math.PI) * lane >= CAR_GAP)) return a;
   }
   return null;
