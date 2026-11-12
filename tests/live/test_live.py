@@ -16,6 +16,8 @@ import sqlite3
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 
 import pytest
 
@@ -79,6 +81,21 @@ def lead(doc):
     return doc['agents'][0]
 
 
+def deny(app, ask_id):
+    """Deny a waiting request as the page does it: the launch token and the server's own Origin."""
+    req = urllib.request.Request(f'http://127.0.0.1:{app.port}/api/answer', method='POST',
+                                 data=json.dumps({'id': ask_id, 'decision': 'deny'}).encode(),
+                                 headers={'Content-Type': 'application/json', 'X-Skyborne-Token': app.token,
+                                          'Origin': f'http://127.0.0.1:{app.port}'})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+    except (urllib.error.URLError, TimeoutError) as e:  # recorded, so the step's report still prints
+        return f'no answer: {e}'
+
+
 @pytest.fixture
 def live(monkeypatch):
     from conftest import REAL_CLAUDE_CONFIG_DIR
@@ -94,7 +111,8 @@ def live(monkeypatch):
     (project / '.claude').mkdir(parents=True, exist_ok=True)
     (project / '.claude' / 'settings.local.json').write_text(json.dumps({
         'enabledPlugins': {'skyborne@skills-dir': False},
-        # the helpers' read-only commands run without a dialog; the test's own touch commands still ask
+        # the helpers' read-only commands usually run without a dialog (one on a path with shell characters, such as
+        # this checkout's '&', can still ask: step 1 denies it); the test's own touch commands still ask
         'permissions': {'allow': ['Read', 'Grep', 'Glob', 'Bash(wc:*)', 'Bash(grep:*)', 'Bash(cat:*)', 'Bash(head:*)']}}))
     (project / 'alpha.txt').write_text('one\ntwo\nthree\nfour\n')
     (project / 'beta.txt').write_text('The secret word is pineapple.\n')
@@ -136,12 +154,25 @@ def test_a_real_session_end_to_end(live):
         assert doc, 'no document after SessionStart'
         timings['claude launched -> first doc'] = t - launched
 
-        # 1) two helpers in parallel, linked and done at SubagentStop
+        # 1) two helpers in parallel, linked and done at SubagentStop. Each gets its file's full path and is told to use
+        # only Read, but a helper can still reach for a command that asks first (with Claude Code 2.1.322 one asked to
+        # run `find` to locate beta.txt). Nobody is at the terminal here, so the test denies such a request through
+        # Skyborne, as the page would (never approves: the command could be anything), and the helper carries on
+        step_at = time.time()
         s.type_line('In ONE message, call the Agent tool twice in parallel, both with subagent_type Explore: '
-                    'one counts the lines in alpha.txt, the other finds the secret word in beta.txt. Tell each helper to use only the Read tool. Then report both answers.')
-        t, doc = stream.wait(lambda d: len(d['agents']) == 3 and all(a['status'] == 'done' for a in d['agents'][1:])
-                             and lead(d)['status'] == 'done', 180)
-        assert doc, f'helpers never finished: {json.dumps(stream.latest())[:2000]}'
+                    f'one counts the lines in {project / "alpha.txt"}, the other finds the secret word in {project / "beta.txt"}. '
+                    'Give each helper its full path and tell it to use only the Read tool. Then report both answers.')
+        done = lambda d: len(d['agents']) == 3 and all(a['status'] == 'done' for a in d['agents'][1:]) and lead(d)['status'] == 'done'
+        denied, doc, end = {}, None, time.monotonic() + 180
+        while doc is None and time.monotonic() < end:
+            for ask in app.approvals.snapshot()['asks']:
+                if ask['state'] == 'open' and ask['id'] not in denied:
+                    denied[ask['id']] = (ask['agent'], ask['tool'], json.dumps(ask['input'])[:120], deny(app, ask['id']))
+            t, doc = stream.wait(done, 1, since=step_at)
+        if denied:
+            print('\nstep 1, denied through Skyborne (agent, tool, input, status):', list(denied.values()))
+        assert doc, f'helpers never finished ({len(stream.latest()["agents"])} agents): {json.dumps(stream.latest())[:2000]}'
+        assert all(status == 200 for *_, status in denied.values()), denied
         helpers = doc['agents'][1:]
         assert all(h['parent'] == 'main' and h['description'] and h['type'] == 'Explore' for h in helpers), helpers
         assert doc['turns'] == 1

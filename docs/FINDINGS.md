@@ -316,6 +316,9 @@ A real session with the background-curl plugin, in default permission mode:
   No `Stop` followed the "No".
 - **A permission request from inside a helper** carries the helper's `agent_id`. In default mode
   two Explore helpers each asked to run `wc`/`grep` through Bash, and both showed as waiting.
+- With Claude Code 2.1.322, a helper told to use only Read still asked to run `find` on a full path
+  written with escaped shell characters (`Coding\ \&\ Development`), while a plain `find . -name beta.txt`
+  ran without asking. The live test now denies any request that comes up in its helper step.
 - With Skyborne stopped mid-session, the session carried on and nothing showed in the terminal.
   After a restart, the turns from before came back from the database and the answer given meanwhile
   came back from the transcript.
