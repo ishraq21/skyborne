@@ -8,6 +8,12 @@ notes are the version's section here.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-11
+
+**A phone held sideways**
+- On a phone held sideways, the console now sits on the right, as on a laptop, instead of in a sheet over the bottom, and the title and toolbar share one row. A Skybot you click stays in view to the left of the console ([#22](https://github.com/ishraq21/skyborne/issues/22)), and the toolbar no longer covers the console's ×.
+- With the console open there, a "needs you" alert sits at the bottom left, clear of the console. Like on an upright phone, it still steps aside while a session's details are open.
+
 ## [0.2.0] - 2026-10-09
 
 **City scale**

@@ -1,6 +1,6 @@
 <style>
   /* Layout: a full-bleed 3D city stage; the title and toolbar in the top corners; the
-     console docked right (a bottom sheet on phones). The chrome is "Skyborne milk":
+     console docked right (a bottom sheet on upright phones). The chrome is "Skyborne milk":
      frosted milky-white panels, graphite text, hairline borders, small status dots and one
      accent, the City Hall amber (the same amber as the city's "needs you" beam). No neon,
      glow or all-caps. The reel overlay stays dark-backed for filming.
@@ -389,6 +389,18 @@
     body:has(#console[data-open="true"] #sessDetail:not([hidden])) .alert{ display: none; }
     .tl-rows{ width: 64px; }
     .srow{ grid-template-columns: 34px 7px minmax(0, 64px) minmax(0, 1fr) auto; }
+  }
+  /* a phone held sideways is too short for a sheet (the sheet and the header would leave no city between them):
+     the header goes back to one row and the console docks on the right, as on a laptop, a little narrower.
+     Under 460 px the header's one row would wrap onto the console, so a window that small keeps the sheet
+     (no phone is that narrow sideways). sheetQuery in 06-ui.js is the exact opposite of this query */
+  @media (460px <= width <= 760px) and (orientation: landscape){
+    .hud{ flex-direction: row; align-items: flex-start; }
+    .toolbar{ align-self: auto; }
+    .console, .console:has(#sessDetail:not([hidden])){ left: auto; right: 16px; top: calc(76px + env(safe-area-inset-top, 0px)); height: auto; width: min(340px, 54vw); }
+    .console[data-open="false"]{ transform: translateX(calc(100% + 24px)); }
+    /* with the console open, the alert takes the bottom edge of the city to its left */
+    body:has(#console[data-open="true"]) .alert{ left: 16px; transform: none; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); max-width: calc(100vw - min(340px, 54vw) - 48px); }
   }
   @media (max-width: 380px){ .foot .follow{ padding: 0; width: 31px; justify-content: center; } .follow span{ display: none; } }  /* a small phone: the logo alone */
   @media (prefers-reduced-motion: reduce){

@@ -573,7 +573,7 @@ async function toggleFull() {
 }
 function setSamples(on) { prefs.samples = on; if (on) startSamples(); else stopSamples(); setLive(city.status); uiDirty = true; }
 
-const phoneQuery = matchMedia('(max-width: 760px)');  // the sheet layout's own breakpoint (page.html)
+const sheetQuery = matchMedia('(width <= 760px) and (orientation: portrait), (width < 460px)');  // the console is a bottom sheet (page.html); a phone held sideways docks it on the right
 $('btnConsole').addEventListener('click', () => setConsole(!prefs.console));
 $('btnConsoleClose').addEventListener('click', () => {
   const had = document.activeElement === $('btnConsoleClose');
@@ -726,10 +726,10 @@ function step(now) {
     if (intro.t >= 1 || performance.now() - lastInput < 50) intro.on = false;
     camera.lookAt(controls.target);
   } else updateCamera(dt);
-  viewShift.target = prefs.console && !director.on && viewW > 760 ? Math.min(200, ($('console').offsetWidth + 32) / 2) : 0;
-  // on a phone the console is a sheet over the bottom: the picture moves up to the middle of the band between the toolbar and the sheet
+  viewShift.target = prefs.console && !director.on && !sheetQuery.matches ? Math.min(200, ($('console').offsetWidth + 32) / 2) : 0;
+  // on an upright phone the console is a sheet over the bottom: the picture moves up to the middle of the band between the toolbar and the sheet
   // (the CSS breakpoint decides, not the stage width, which is still the 9:16 reel's for a frame after leaving reel mode; the sheet's own top is read, which includes the phone's bottom inset)
-  viewShift.targetY = prefs.console && !director.on && phoneQuery.matches
+  viewShift.targetY = prefs.console && !director.on && sheetQuery.matches
     ? Math.max(0, Math.min(viewH * 0.4, viewH / 2 - (document.querySelector('.hud').getBoundingClientRect().bottom + $('console').offsetTop) / 2)) : 0;
   if (Math.abs(viewShift.target - viewShift.cur) > 0.3 || Math.abs(viewShift.targetY - viewShift.curY) > 0.3) {
     viewShift.cur = damp(viewShift.cur, viewShift.target, 5, dt); viewShift.curY = damp(viewShift.curY, viewShift.targetY, 5, dt); applyViewOffset();

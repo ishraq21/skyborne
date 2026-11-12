@@ -636,7 +636,7 @@ const dist = (f) => path.resolve(__dirname, '../dist', f);
   // the × in the console's header hides the console at every size (on a phone the toolbar icon is easy to miss):
   // it is on top and big enough to tap, it has a name, it hides the console, and focus goes to the toolbar button, which
   // brings the console back
-  for (const [w, h, min] of [[1280, 800, 28], [390, 844, 36]]) {
+  for (const [w, h, min] of [[1280, 800, 28], [390, 844, 36], [667, 375, 36]]) {  // and a phone held sideways, where the toolbar once sat on the ×
     await page.setViewportSize({ width: w, height: h }); await page.waitForTimeout(400);
     await page.evaluate(() => { if (document.getElementById('console').dataset.open !== 'true') document.getElementById('btnConsole').click(); });
     await page.waitForFunction(() => document.getElementById('console').dataset.open === 'true', null, { timeout: 15000 });
@@ -686,21 +686,37 @@ const dist = (f) => path.resolve(__dirname, '../dist', f);
   const aimBad = aim.error || Object.entries(aim).some(([k, v]) => v.worst >= 1 || v.frames < 2 || (k !== 'setup' && k !== 'overview' && v.moved < 5)) || aim.bot.endY <= 0 || !aim.bot.headOnScreen;
   if (aimBad) errors.push('The camera does not keep facing where it flies (worst angle in degrees, must be under 1): ' + JSON.stringify(aim));
 
-  // on a phone the console is a sheet over the bottom: a click on a bot must leave the bot's head in the band
-  // between the toolbar and the sheet (not hidden behind the sheet, with only sky and clouds above it)
-  await page.setViewportSize({ width: 390, height: 844 }); await page.waitForTimeout(400);
-  const phoneBot = await page.evaluate((settleMs) => new Promise((resolve) => {
-    const o = window.__skyborne, d0 = [...o.city.districts.values()].find((d) => d.robots.size), bot = d0 && [...d0.robots.values()][0], head = o.camera.position.clone();
-    if (!bot) { resolve({ error: 'no bot to select' }); return; }
-    o.selectBot(bot);
-    setTimeout(() => {
-      bot.head.getWorldPosition(head); head.project(o.camera);
-      const y = (1 - head.y) / 2 * innerHeight, band = [document.querySelector('.hud').getBoundingClientRect().bottom, document.getElementById('console').getBoundingClientRect().top];
-      o.selectDistrict(null); o.closeDetail(); o.overview();  // back to the skyline, so the tests after this one start from the overview
-      setTimeout(() => resolve({ y: Math.round(y), band: band.map(Math.round), inBand: y >= band[0] && y <= band[1], x: Math.round((head.x + 1) / 2 * innerWidth) }), 1800 * settleMs / 4000);
-    }, settleMs);
-  }), 4000 * SLOW);
-  if (phoneBot.error || !phoneBot.inBand) errors.push("On a phone a click on a bot leaves its head behind the console sheet or the toolbar (y, band): " + JSON.stringify(phoneBot));
+  // on an upright phone the console is a sheet over the bottom: a click on a bot must leave the bot's head in the band
+  // between the toolbar and the sheet (not hidden behind the sheet, with only sky and clouds above it). Held sideways
+  // (#22) the sheet left no band at all, so the console docks on the right: the head must be below the toolbar and left
+  // of the console, the console must start below the toolbar, and the "needs you" alert must stay clear of the console
+  for (const [w, h, side] of [[390, 844, false], [667, 375, true]]) {
+    await page.setViewportSize({ width: w, height: h }); await page.waitForTimeout(400);
+    const phoneBot = await page.evaluate(({ settleMs, side }) => new Promise((resolve) => {
+      const o = window.__skyborne, d0 = [...o.city.districts.values()].find((d) => d.robots.size), bot = d0 && [...d0.robots.values()][0], head = o.camera.position.clone();
+      if (!bot) { resolve({ error: 'no bot to select' }); return; }
+      o.selectBot(bot);
+      setTimeout(() => {
+        bot.head.getWorldPosition(head); head.project(o.camera);
+        const x = (head.x + 1) / 2 * innerWidth, y = (1 - head.y) / 2 * innerHeight;
+        const hud = document.querySelector('.hud').getBoundingClientRect(), con = document.getElementById('console').getBoundingClientRect();
+        const free = side ? [0, hud.bottom, con.left, innerHeight] : [0, hud.bottom, innerWidth, con.top];  // left, top, right, bottom
+        o.selectDistrict(null); o.closeDetail(); o.overview();  // back to the skyline, so the tests after this one start from the overview
+        setTimeout(() => {
+          // the earlier tests have answered the fake asks, so the alert is shown here by hand, with a long line (measured, then put back)
+          const al = document.getElementById('alert'), txt = document.getElementById('alertText'), was = { hidden: al.hidden, text: txt.textContent };
+          al.hidden = false; txt.textContent = 'Gumdrop in a-district-renamed-to-forty-characters-x needs you: mcp__github__create_pull_request';
+          const ar = al.getBoundingClientRect(), shown = getComputedStyle(al).display !== 'none';
+          al.hidden = was.hidden; txt.textContent = was.text;
+          const alertClear = !side || (shown && ar.width > 0 && (ar.right <= con.left || ar.bottom <= con.top));
+          resolve({ x: Math.round(x), y: Math.round(y), free: free.map(Math.round), inFree: x >= free[0] && x <= free[2] && y >= free[1] && y <= free[3],
+            consoleBelowHud: !side || con.top >= hud.bottom, alertShown: shown, alertClear });
+        }, 1800 * settleMs / 4000);
+      }, settleMs);
+    }), { settleMs: 4000 * SLOW, side });
+    if (phoneBot.error || !phoneBot.inFree || !phoneBot.consoleBelowHud || !phoneBot.alertClear)
+      errors.push(`On a phone at ${w}x${h} a click on a bot leaves its head behind the console or the toolbar, or the console or alert overlap: ` + JSON.stringify(phoneBot));
+  }
   await page.setViewportSize({ width: 1280, height: 800 }); await page.waitForTimeout(400);
 
   // the name on the 3D signs: no text pixels at the edges of the flag and blimp textures, and the
